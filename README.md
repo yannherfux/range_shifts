@@ -1,2 +1,4 @@
 # chapter1
-This is the first chapter of my PhD on temperature and marine biodiversity
+Distinguishing latitudinal changes in the distribution limits of Australian marine species over a decade of environmental change
+
+This is the first chapter of my PhD sutdying the effects of temperature on marine biodiversity
