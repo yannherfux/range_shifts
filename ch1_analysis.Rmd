@@ -7,13 +7,7 @@ output: html_document
 
 This is the code used for analyzing the data for Chapter 1
 
-Set working directory
-```{r}
-path <- "C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/chapter1"
-
-setwd("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/chapter1")
-```
-
+Remember to set working directory
 
 # Load initial packages and data {.tabset}
 
