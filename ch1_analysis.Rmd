@@ -29,16 +29,16 @@ library(DT) # for online data.table manipulation
 *Input data*
 ```{r Reading raw data, message=FALSE}
 # RLS & ATRC combined dataset
-rls.atrc <- fread("Raw Data/aus-rls-data.csv") #nrows = 1,515,420
+rls.atrc <- fread("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/Raw Data/aus-rls-data.csv") #nrows = 1,515,420
 
 # RLS Method 1 2021 update
-rls.2021 <- fread("Raw Data/Aus_RLS_M1_20210903.csv") #nrows = 820,516
+rls.2021 <- fread("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/Raw Data/Aus_RLS_M1_20210903.csv") #nrows = 820,516
 
 # Species traits dataset (for extracting guild information)
-traits <- fread("Raw Data/TRAITS MASTER.csv") #nrows = 5,188
+traits <- fread("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/Raw Data/TRAITS MASTER.csv") #nrows = 5,188
 
 # RLS survey ID sea-surface temperature dataset (Conor's method)
-sst_data <- fread("Raw Data/rls_sites_sst_2yr.csv") #nrows = 26,904
+sst_data <- fread("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/Raw Data/rls_sites_sst_2yr.csv") #nrows = 26,904
 ```
 
 ***
