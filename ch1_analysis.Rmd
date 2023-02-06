@@ -2,7 +2,18 @@
 title: "Distinguishing latitudinal changes of shallow reef species over a decade of environmental change in Australia"
 author: "Yann Herrera Fuchs"
 date: "2023-01-25"
-output: html_document
+output: 
+  html_document:
+    theme: darkly
+    highlight: default
+    toc: true
+    toc_depth: 3
+    toc_float:
+      toc_collapse: true
+    code_folding: hide
+    fig_width: 10
+    fig_height: 7
+    fig_caption: true
 ---
 
 This is the code used for analyzing the data for Chapter 1
@@ -75,7 +86,7 @@ traits <- traits[, .(taxon = `CURRENT_SPECIES_NAME`,
 rls <- rls.raw[traits, on= "taxon", nomatch = NULL] # nrow = 1,211,972
 ```
 
-Add information on SST at each survey. we are using the average of the 2-years daily SST leading to the survey date. This is to account for periods of extreme or anomalous weather events.
+Add information on SST at each survey. We are using the average of the 2-years daily SST leading to the survey date. This is to account for periods of extreme or anomalous weather events.
 ```{r}
 # Select columns of interest from SST data
 rls <- rls[sst_data[, .(survey_id, mean_sst)], on= .(survey_id), nomatch = NULL]#nrow = 1,220,255
@@ -480,20 +491,20 @@ write.csv(rls_summary[, !21:23][limit != "optimum"], "rls_summary.csv", row.name
 #### Statistical analysis
 ```{r}
 # Statistical significance
-t.test(rls_summary[abs(dLat) < 5 & guild == "tropical" & limit == "northern"]$dLat, mu = 0) # p < 0.05
-t.test(rls_summary[abs(dLat) < 5 & limit == "southern" & guild == "tropical" & side == "west"]$dLat, mu = 0) # p < 0.05
-t.test(rls_summary[abs(dLat) < 5 & limit == "northern" & guild == "temperate" & side == "west"]$dLat, mu = 0) # p = 0.05
-t.test(rls_summary[abs(dLat) < 5 & limit == "northern" & guild == "temperate" & side == "east"]$dLat, mu = 0) # p < 0.05
+#t.test(rls_summary[abs(dLat) < 5 & guild == "tropical" & limit == #"northern"]$dLat, mu = 0) # p < 0.05
+#t.test(rls_summary[abs(dLat) < 5 & limit == "southern" & guild == #"tropical" & side == "west"]$dLat, mu = 0) # p < 0.05
+#t.test(rls_summary[abs(dLat) < 5 & limit == "northern" & guild == #"temperate" & side == "west"]$dLat, mu = 0) # p = 0.05
+#t.test(rls_summary[abs(dLat) < 5 & limit == "northern" & guild == #"temperate" & side == "east"]$dLat, mu = 0) # p < 0.05
 
-rls_summary[abs(dLat) < 5 & limit != "optimum", t.test(dLat, mu = 0), by = .(guild, side, limit)][p.value < 0.05]
+#rls_summary[abs(dLat) < 5 & limit != "optimum", t.test(dLat, mu = 0), by = .(guild, side, limit)][p.value < 0.05]
 
 
 
-fit <- aov(dLat ~ 1 + guild + limit + side, data = rls_summary)
+#fit <- aov(dLat ~ 1 + guild + limit + side, data = rls_summary)
 
-library(multcomp)
+#library(multcomp)
 
-summary(glht(fit, linfct = mcp(guild = "Dunnett")))
+#summary(glht(fit, linfct = mcp(guild = "Dunnett")))
 ```
 
 

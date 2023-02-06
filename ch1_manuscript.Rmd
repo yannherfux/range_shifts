@@ -1,0 +1,57 @@
+---
+title: "Distinguishing latitudinal changes of shallow-water reef species over a decade
+  of environmental change"
+author: "Yann Herrera Fuchs"
+date: "2023-02-06"
+output: 
+  html_document:
+    theme: darkly
+    highlight: default
+    toc: true
+    toc_depth: 3
+    toc_float:
+      toc_collapse: true
+    code_folding: hide
+    fig_width: 10
+    fig_height: 7
+    fig_caption: true
+---
+
+This is a working document to write up the report of Chapter 1
+
+# Abstract
+
+# Introduction
+
+# Methods
+
+## Data sources
+
+
+### Biodiversity data from RLS and ATRC
+We used standardizes underwater visual censuses of fish and macro-mobile invertebrates using Reef Life Survey methodology. This consists of biodiversity data tallied into 500 m^2^ bins for fish and 50 m^2^ for invertebrates. We used data from XXX (706) sites, XXX (799) species and surveys from January 2010 to June 2021.
+
+Trait data
+
+### SST data
+We used NOAA's Coral Reef Watch program to estimate the average sea-surface temperature of each survey using the daily means of the two years leading up to the survey date. This is to account for periods of extreme or anomalous weather events.
+
+## Data Processing
+
+We paired this data to average SST based on the date the survey was performed.
+
+We defined two time periods to compare species' limits based on the 2016 warm anomaly associated to mass coral bleaching events, with the premise that this event would drive species poleward.
+
+Given the nature of Australian geography, we categorized species based on whether they are found in the east or west of the country at the 142.5 longitudinal mark in Torres Strait.
+
+We calculated each species' latitudinal limits by ranking abundance by latitude (from the equator to the poles), and then selecting the latitudinal points associated to the 5th, 50th and 95th percentiles of the abundance-weighted distribution. We calculated these limits at each time period and side. The northern limits (5th percentile of the abundance-weighted distribution) of tropical species was calculated as a combination of both sides, whereas only temperate species which were found on both sides of Australia had combined southern limits. We then assessed the change in latitudinal limits from both time periods at each side for both temperate and tropical species.
+
+Description on statistics used to evaluate distribution and means: ANOVA/or t-tests
+
+We calculated inverse distance weighted means to visualize a geographical estimate of where most movements where happening, and associated this to changes in temperature at that site.
+
+Regressions and GLMSs
+
+# Results
+
+# Conclusion
