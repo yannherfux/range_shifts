@@ -545,31 +545,6 @@ ggarrange(rls_summary_bp, rls_means_plot_wt,
           nrow = 2, ncol = 1)
 
 
-stat_box_data <- function(y, upper_limit = max(rls_summary$dLat) * 1.15) {
-  return( 
-    data.frame(
-      y = 0.95 * upper_limit,
-      label = paste('N =', length(y), '\n',
-                    'mean =', round(mean(y), 1), '\n')
-    )
-  )
-}
-
-ggplot(rls_summary[guild == "tropical" & limit == "northern"], 
-                         aes(x = ecoregion, y = dLat)) +
-  geom_boxplot() +
-  geom_hline(yintercept = 0, lty = "dashed") +
-  stat_summary(
-    fun.data = stat_box_data, 
-    geom = "text", 
-    hjust = 0.5,
-    vjust = 0.9
-  ) + 
-  #facet_grid(limit ~ side) +
-  labs(y = "dLat", title = "Latitudinal changes before and after 2016 heatwave") +
-  theme_bw()
-
-
 ## Site distribution and temperature map
 
 library(sf) # processing spatial vector data
@@ -717,13 +692,13 @@ ggarrange(site_dSST_plot, dLat_plot,
 
 
 # dLat vs dSST regression
-dLat_dSST_plot <- ggplot(rls_summary[limit != "optimum" & abs(dLat) < 5],
+dLat_dSST_plot <- ggplot(rls_summary[limit != "optimum"],
                          aes(x = dSST, y = dLat, col = guild)) +
   geom_point() +
   geom_smooth(method = 'glm', color = "black") +
   geom_hline(yintercept = 0, lty = "dashed") +
   facet_grid(guild + limit ~ side, scales = "free") +
-  labs(title = "Site-level temperature change in relation to latitudinal displacement") +
+  labs(title = "Latitudinal displacement in relation to site-level temperature change") +
   theme_bw()
 
 lm(
@@ -731,8 +706,11 @@ lm(
 )
 
 
-# Abundance plots for temperate species
-ggplot(rls_summary, aes(x = class, y = pop_trend)) +
+# Exploratory correlations
+
+## Abundance plots
+ggplot(rls_summary[limit != "optimum"], 
+       aes(x = class, y = pop_trend, col = guild)) +
   geom_boxplot() +
   facet_grid(limit ~ side)
 
@@ -769,32 +747,53 @@ lm(
   pop_trend ~ 1 + dSST, data = rls_sites[, .(dSST), by = .(site = site_code)][rls_summary, on = .(site)][!is.na(dSST)][abs(pop_trend) != Inf][guild == "tropical"] 
 )
 
+## Thermal niche and SGIs
 
-### Exploratory correlation
-# Thermal niche
-thermal_niche <- fread("/RLS/Datasets/Raw Data/Thermal niche.csv") #nrows = 4,465
-sgi_dt <- fread("/RLS/Datasets/Raw Data/SGIs.csv") #nrows = 26,904
+stat_box_data <- function(y, upper_limit = max(rls_summary$dLat) * 1.15) {
+  return( 
+    data.frame(
+      y = 0.95 * upper_limit,
+      label = paste('N =', length(y), '\n',
+                    'mean =', round(mean(y), 1), '\n')
+    )
+  )
+}
 
-rls_summary_thermal <- thermal_niche[, .(taxon = `SPECIES_NAME`, upper_thermal = `95th percentile`)][rls_summary, on= .(taxon)]
-rls_summary_SGI <- sgi_dt[, .(taxon = `SPECIES_NAME`, SGI)][rls_summary, on= .(taxon)]
-
-
-ggplot(rls_summary_thermal[limit == "northern" & guild == "tropical" & dLat > 0],
-                              aes(x = upper_thermal, y = dLat, col = guild)) +
-  geom_point() +
-  geom_smooth(method = 'glm', color = "black") +
+N_limit_dist_plot <- ggplot(rls_summary[guild == "tropical" & limit == "northern"], 
+                            aes(x = ecoregion, y = dLat)) +
+  geom_boxplot() +
   geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(limit ~ guild) +
-  labs(labs = "Ppopulation trend", title = "Population trend in relation to site-level temperature 
-       change for temperate and tropical species") +
+  stat_summary(
+    fun.data = stat_box_data, 
+    geom = "text", 
+    hjust = 0.5,
+    vjust = 0.9
+  ) + 
+  labs(y = "dLat", title = "Latitudinal changes before and after 2016 heatwave") +
   theme_bw()
 
-ggplot(rls_summary_SGI[limit == "northern" & guild == "tropical" & dLat > 0],
-                              aes(x = SGI, y = dLat, col = guild)) +
+thermal_niche <- fread("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/Raw Data/Thermal niche.csv") #nrows = 4,465
+sgi_dt <- fread("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/Raw Data/SGIs.csv") #nrows = 26,904
+
+rls_summary_thermal <- thermal_niche[, .(taxon = `SPECIES_NAME`, upper_thermal = `95th percentile`)][rls_summary, on= .(taxon), nomatch = NULL]
+rls_summary_SGI <- sgi_dt[, .(taxon = `SPECIES_NAME`, SGI)][rls_summary, on= .(taxon), nomatch = NULL]
+
+
+N_limit_thermal <- ggplot(rls_summary_thermal[limit == "northern" & guild == "tropical"],
+                              aes(x = upper_thermal, y = dLat)) +
   geom_point() +
   geom_smooth(method = 'glm', color = "black") +
   geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(limit ~ guild) +
+  facet_wrap(vars(ecoregion)) +
+  labs(x = "Upper thermal limit (C)") +
+  theme_bw()
+
+ggplot(rls_summary_SGI[limit == "northern" & guild == "tropical"],
+                              aes(x = SGI, y = dLat)) +
+  geom_point() +
+  geom_smooth(method = 'glm', color = "black") +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_wrap(vars(ecoregion)) +
   labs(labs = "Ppopulation trend", title = "Population trend in relation to site-level temperature 
        change for temperate and tropical species") +
   theme_bw()
@@ -803,7 +802,7 @@ ggplot(rls_summary_SGI[limit == "northern" & guild == "tropical" & dLat > 0],
 
 library(ggpubr)
 
-rls_summary_plots <- ggarrange(rls_summary_bp, site_dSST_plot,
+N_limit_plots <- ggarrange(N_limit_dist_plot, N_limit_thermal,
                                nrow = 1, ncol = 2,
                                widths = c(1.4, 1))
 
