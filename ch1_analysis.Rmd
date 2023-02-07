@@ -449,14 +449,15 @@ rls <- rbind(rls_trop_N_wt, rls_temp_N_wt, rls_opt_wt, rls_S_wt, rls_temp_S_wt) 
 
 # Calculate dSST at each site using the heatwave periods
 rls_sites <- rls[period == "preheatwave",
-                 .(sst_p1 = mean(mean_sst)),
-                 by = .(site_code, latitude, longitude)][rls[period == "postheatwave",
-                                                             .(sst_p2 = mean(mean_sst)),
+                 .(sst_t1 = mean(mean_sst)),
+                 by = .(site_code, latitude, longitude, ecoregion)][rls[period == "postheatwave",
+                                                             .(sst_t2 = mean(mean_sst)),
                                                              by = .(site_code)], on = .(site_code), nomatch = NULL]
 
 rls_sites <- rls_sites[, .(latitude,
                            longitude,
-                           dSST = sst_p2 - sst_p1), 
+                           ecoregion,
+                           dSST = sst_t2 - sst_t1), 
                        by = .(site_code)] # nrow = 928
 
 ### Calculate latitudinal changes in limits, dispersion index and population trends
@@ -465,12 +466,12 @@ rls_summary <- rls[period == "preheatwave" &
                    .(lat1 = unique(lat), lon1 = unique(lon), site1 = unique(site), 
                      temp1 = unique(temp), 
                      total1 = mean(total)),
-                   by = .(taxon, class, ecoregion, guild, max_length, presence, mobility, side, limit, method)][rls[period == "postheatwave" & 
+                   by = .(taxon, class, guild, max_length, presence, mobility, side, limit, method)][rls[period == "postheatwave" & 
                                                                                                            latitude > (lat - 0.5) & latitude < (lat + 0.5), # approximate latitude to limit data 
                                                                                                          .(lat2 = unique(lat), lon2 = unique(lon), site2 = unique(site), 
                                                                                                            temp2 = unique(temp), 
                                                                                                            total2 = mean(total)),
-                                                                                                         by = .(taxon, class, ecoregion, guild, max_length, presence, mobility, side, limit, method)], on = .(taxon, class, ecoregion, guild, max_length, presence, mobility, side, limit, method)] #nrow = 4,903
+                                                                                                         by = .(taxon, class, guild, max_length, presence, mobility, side, limit, method)], on = .(taxon, class, guild, max_length, presence, mobility, side, limit, method)] #nrow = 3,915
 
 rls_summary <- rls_summary[, ':=' (lat = lat1,
                                    lon = lon1,
@@ -480,9 +481,11 @@ rls_summary <- rls_summary[, ':=' (lat = lat1,
                                    dTemp = temp2 - temp1,
                                    pop_trend = log(total2 / total1))]
 
-rls_summary <- rls_summary[!is.na(dLat)] #nrow = 3,363
-rls_summary <- rls_summary[rls_sites[, .(dSST), by = .(site1 = site_code)], on= .(site1),
-                           nomatch = NULL] #nrow = 2,203
+rls_summary <- rls_summary[!is.na(dLat)] #nrow = 3,676
+
+# Add dSST and ecoregion data
+rls_summary <- rls_summary[rls_sites[, .(ecoregion, dSST), by = .(site1 = site_code)], on= .(site1),
+                           nomatch = NULL] #nrow = 2,364
 
 # Save dataset for corrections and checking of species limits
 write.csv(rls_summary[, !21:23][limit != "optimum"], "rls_summary.csv", row.names = FALSE)
@@ -678,8 +681,11 @@ dLat_plot <- ggplot() +
   
   # sites included in analysis
   geom_point(data = rls_summary, 
-             aes(x = lon, y = lat, col = guild),
-             shape = 1, size = 3) +
+             aes(x = lon, y = lat, shape = guild),
+             size = 3) +
+  
+  # Select shapes to display
+  scale_shape_manual(values = c("tropical" = 1, "temperate" = 2)) +
   
   # East/west division
   geom_vline(xintercept = 142.5, lty = "dashed") +
@@ -749,7 +755,7 @@ pop_trend_dSST_plot <- ggplot(rls_summary[limit != "optimum"],
   geom_point() +
   geom_smooth(method = 'glm', color = "black") +
   geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(guild ~ side) +
+  facet_grid(guild + class ~ side) +
   labs(labs = "Population trend", title = "Population trend in relation to site-level temperature 
        change for temperate and tropical species") +
   theme_bw()
