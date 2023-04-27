@@ -26,6 +26,9 @@ Remember to set working directory
 ```{r Load packages, message=FALSE, warning=FALSE}
 rm(list = ls()) # clear environment memory
 
+dir <- "C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R"
+setwd(dir)
+
 # Data wrangling
 library(tidyverse) # for manipulating data in tidy format
 library(data.table) # summarizing and subsetting more efficiently using data.table syntax
@@ -39,40 +42,19 @@ library(DT) # for online data.table manipulation
 
 *Input data*
 ```{r Reading raw data, message=FALSE}
-# RLS & ATRC combined dataset
-rls.atrc <- fread("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/Raw Data/aus-rls-data.csv") #nrows = 1,515,420
-
-# RLS Method 1 2021 update
-rls.2021 <- fread("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/Raw Data/Aus_RLS_M1_20210903.csv") #nrows = 820,516
+# RLS dataset
+rls.raw <- fread(paste0(dir, "/Raw Data/ep_m1_m2_AUS.csv")) #nrows = 1,634,614
 
 # Species traits dataset (for extracting guild information)
-traits <- fread("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/Raw Data/TRAITS MASTER.csv") #nrows = 5,188
+traits <- fread(paste0(dir, "/Raw Data/TRAITS MASTER.csv")) #nrows = 5,188
 
 # RLS survey ID sea-surface temperature dataset (Conor's method)
-sst_data <- fread("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/Raw Data/rls_sites_sst_2yr.csv") #nrows = 26,904
+sst_data <- fread(paste0(dir, "/Raw Data/rls_sites_sst2.csv")) #nrows = 54,973
 ```
 
 ***
 ## Code
 ### Organizing data
-
-Create a single biodiversity dataset.
-```{r}
-# Bind the two datasets
-rls.raw <- rbind(rls.atrc, rls.2021) # nrow = 2,335,936
-
-# Select columns of interest
-rls.raw <- rls.raw[, .(survey_id, 
-                       site_code,
-                       latitude, longitude, ecoregion,
-                       survey_date,
-                       method, block,
-                       phylum, class, order, family, taxon,
-                       total)]
-
-# Remove duplicated rows
-rls.raw <- rls.raw[duplicated(rls.raw) == FALSE] # nrow = 1,246,049
-```
 
 Add trait information relevant to analysis.
 ```{r}
@@ -83,30 +65,19 @@ traits <- traits[, .(taxon = `CURRENT_SPECIES_NAME`,
                      mobility = `Water column`)]
 
 # Join datasets
-rls <- rls.raw[traits, on= "taxon", nomatch = NULL] # nrow = 1,211,972
+rls <- rls.raw[traits, on= "taxon", nomatch = NULL] # nrow = 1,575,691
 ```
 
 Add information on SST at each survey. We are using the average of the 2-years daily SST leading to the survey date. This is to account for periods of extreme or anomalous weather events.
 ```{r}
+# Get mean SST at each survey ID
+sst_data <- sst_data[, .(mean_sst = mean(mean_sst, na.rm = TRUE)), by = .(survey_id)] # nrow = 28,074
+
 # Select columns of interest from SST data
-rls <- rls[sst_data[, .(survey_id, mean_sst)], on= .(survey_id), nomatch = NULL]#nrow = 1,220,255
+rls <- rls[sst_data[, .(survey_id, mean_sst)], on= .(survey_id), nomatch = NULL]#nrow = 1,575,691
 
-rls <- rls[!is.na(mean_sst)] #nrow = 975,824
+rls <- rls[!is.na(mean_sst)] #nrow = 1,272,629
 ```
-
-Define time periods
-```{r}
-# June 2016 is the heatwave period cutoff
-rls$period <- ifelse(rls$survey_date < "2016-06-01", "preheatwave", "postheatwave")
-```
-
-Define side factor
-```{r}
-# Side is based on 142.5 degrees longitude at Torres Strait
-rls$side <- factor(ifelse(rls$longitude < 142.5, "west", "east"), levels = c("west", "east"))
-```
-
-
 
 ***
 
@@ -116,18 +87,18 @@ rls$side <- factor(ifelse(rls$longitude < 142.5, "west", "east"), levels = c("we
 Remove data that will not be used in this analysis.
 ```{r Remove unnecessary data, message=FALSE, warning=FALSE}
 # Remove species with .sp and .spp (those which don't have species fully resolved)
-rls <- rls[which(grepl("sp.", as.character(rls$taxon), fixed = T) == F), ] #nrow = 974,881
-rls <- rls[which(grepl("spp.", as.character(rls$taxon), fixed = T) == F), ] #nrow = 960,144
+rls <- rls[which(grepl("sp.", as.character(rls$taxon), fixed = T) == F), ] #nrow = 1,271,507
+rls <- rls[which(grepl("spp.", as.character(rls$taxon), fixed = T) == F), ] #nrow = 1,250,239
 
 # Remove NAs in taxon data
-rls <- rls[which(is.na(rls$taxon) == F), ] #nrow = 960,144
+rls <- rls[which(is.na(rls$taxon) == F), ] #nrow = 1,250,239
 
 # Select vertebrate and invertebrate classes to include in analysis
-rls <- rls[class %in% c("Asteroidea", "Cephalopoda", "Crinoidea", "Echinoidea", "Gastropoda", "Holothuroidea", "Malacostraca", "Actinopterygii", "Elasmobranchii"), ] #nrow = 956,240 
+rls <- rls[class %in% c("Asteroidea", "Cephalopoda", "Crinoidea", "Echinoidea", "Gastropoda", "Holothuroidea", "Malacostraca", "Actinopterygii", "Elasmobranchii"), ] #nrow = 1,243,447 
 #NOTE: changed Chondrichtyes to Elasmobranchii, Crinoidea and Holothuroidea not found in raw dataset
 
 # Subset to data from 2010 onwards
-rls <- rls[year(survey_date) >= "2010", ] #nrow = 842,893
+rls <- rls[year(survey_date) >= "2010"] #nrow = 1,105,909
 ```
 
 #### Data adjustments
@@ -140,13 +111,13 @@ rls_sites <- rls[, lapply(.SD, mean),
                  .SDcols = c("latitude", "longitude")]
 
 
-rls <- rls[, c(1:2, 5:20)][rls_sites, on= .(site_code)] 
+rls <- rls[, c(1:8, 11:36)][rls_sites, on= .(site_code)] 
 ```
 
 Adjust method and block data. There should only be two blocks in each transect, and cryptic fish and invertebrates are only found in method 2.
 ```{r Adjust method and block, message=FALSE, warning=FALSE}
 # Remove block 0
-rls <- rls[block != 0] #nrow = 842,892
+rls <- rls[block != 0] #nrow = 1,105,907
 
 # Remove fish species in M2 from M1 (cryptic fish)
 rls[method == 1 & taxon %in% rls[method == 2 & class == "Actinopterygii"]$taxon]$method <- 2
@@ -158,51 +129,66 @@ rls[class != "Actinopterygii" & class != "Elasmobranchii"]$method <- 2
 The raw data is already tallied by block, so we need to sum abundance data for each species by survey ID to get N per 500m^2^ for M1, and per 50m^2^ for M2 (the total of each unique species on each survey).
 ```{r Summing abundance data, message=FALSE, warning=FALSE}
 rls <- rls[, .(total = sum(total)), 
-           by = .(survey_id, 
-                  taxon, class, guild, 
+           by = .(taxon, survey_id,
+                  # add factors of interest
+                  class, guild, 
                   max_length, mobility, 
-                  site_code, latitude, longitude, ecoregion,
-                  survey_date, period, 
-                  mean_sst, 
-                  side)] #nrow = 409,791
+                  site_code, latitude, longitude,
+                  survey_date, 
+                  mean_sst)] #nrow = 457,436
 ```
 
-Furthermore, we need to discard the species that do not occur in at least 20 sites at a given period and side (there are currently some species which shouldn't be occurring in the west).
+#### Site selection and time periods
+In order to avoid sampling biases, we focus on analyzing latitudinal change from the first and last years that sites were surveyed using June 2016 as a heatwave cutoff 
 
 ```{r}
-# Discard species that are not found on both time periods for each side x taxon combo
-taxon_list <- rls[, .N, by = .(taxon, side, period)][, .N, by = .(taxon, side)]
-rls <- rls[taxon_list, on= .(taxon, side)][N > 1] # nrow = 407,192
+# Define period
+rls <- rls[, period:= ifelse(survey_date < "2016-06-01", # heatwave period
+                             "t1", "t2")]
+# Select sites
+rls <- rls[, ':=' (year_i = min(year(survey_date)),
+                   year_f = max(year(survey_date)),
+                   dt = max(year(survey_date)) - min(year(survey_date))),
+           by = .(site_code)]
 
-# Discard species occurring in less than 20 sites at a given period.
-site_list <- rls[, .(site_code), by = .(taxon, period)][, .N, by = .(taxon, period)]
-rls <- rls[site_list, on= .(taxon, period)][i.N >= 20] # nrow = 398,303
+# Remove data in between those time periods and those sites that were only surveyed once. Also removed sites that were not found in both periods
+rls <- rls[year(survey_date) == year_i | year(survey_date) == year_f] #nrow = 273.647
+rls <- rls[dt > 0] #nrow = 205,254
+rls <- rls[site_code %in% rls[period == "t1"]$site_code & site_code %in% rls[period == "t2"]$site_code] #nrow = 178,215
+```
 
-# Discard species in Norfolk Island and Christmas Island ADD JUSTIFICATION
-islands <- rls[site_code %in% c("CI1", "CI2", "CI3", "CI4", "CI5", "CI6", "CI7", "CI8", "CI9",
-                                "NI1", "NI2", "NI3", "NI4", "NI5", "NI6", "NI7", "NI8", "NI9")]
-rls <- rls[!which(site_code %in% islands$site_code)] #nrow = 397,125
+#### Further filtering
+
+To reduce noise we set taxon-level filters.
+
+```{r}
+# Discard species occurring in less than 30 sites.
+species_list <- rls[, .(site_code = unique(site_code)), by = .(taxon)][, .(N_site = .N), by = .(taxon)]
+rls <- rls[species_list, on= .(taxon)][N_site >= 30] # nrow = 164,659
 
 # Categorize rare and common species based on whether they appear in less than 80 sites in the first time period
-site_list <- site_list[period == "preheatwave", .(presence = ifelse(N < 80, "rare", "common")), by = .(taxon)]
-rls <- site_list[rls, on= .(taxon)] # nrow = 397,125
+rls <- rls[, presence:= ifelse(N_site < 80, "rare", "common"), 
+                    by = .(taxon)]
 ```
 
 We also have to calculate the average abundance of species per site per period, and average temperature data the same way.
 ```{r Site-specific temperature and abundance data per year, message=TRUE, warning=FALSE}
 # Density (abundance per site), temperature and site calculations by year
 rls <- rls[, lapply(.SD, mean), # calculate means for the specified data cols
-           by = .(taxon, class, 
+           by = .(taxon, site_code, period,
+                  # include factors of interest
+                  class, 
                   guild, max_length, presence, mobility, 
-                  site_code, latitude, longitude, ecoregion,
-                  period, side), # subsets
+                  latitude, longitude,
+                  year_i, year_f, dt,
+                  N_site), # subsets
            .SDcols = c("total", "mean_sst")] # data cols to average
-# nrow = 174,111
+# nrow = 101,105
 ```
 
-#### Calculating distribution limits
+### Calculating distribution limits
 
-###### Skew values, 5th and 95th percentiles
+##### Skew values, 5th and 95th percentiles
 
 To compare parameter values to changes in abundance, we calculate the midway point (skew), 5th and 95th percentiles of cumulative site abundance for each species at each period. Then we extract the latitude associated to these values to assess the change before and after the heatwave.
 
@@ -210,176 +196,50 @@ To compare parameter values to changes in abundance, we calculate the midway poi
 # Order "rls" dataset from north to south for each species
 rls <- rls[order(taxon, -latitude)]
 
-## Northern limits tropical species
-# Calculate cumulative sum of site abundance by species at each period
-rls_trop <- rls[guild == "tropical"]
-
-rls_trop[, ':=' (cum_abun = cumsum(total)),
-         by = .(taxon, period)]
-
-# Calculate 5th percentile (N limit)
-rls_trop[, ':=' (abun_5 = round(max(cum_abun) * 0.05)), 
-         by = .(taxon, period)]
-
-# Choose the latitude associated to the minimum difference between the 5th percentile and the cumulative site abundance, for each taxon and period.
-Lat05_trop <- rls_trop[, .(min_dif = abs(abun_5 - cum_abun), 
-                           cum_abun, abun_5, 
-                           Lat05 = latitude,
-                           Lon05 = longitude,
-                           site05 = site_code,
-                           Temp05 = mean_sst), 
-                       by = .(taxon, period)][order(taxon, period, min_dif)][, .SD[1], by = .(taxon, period)]
-
-# Join to main rls subset
-rls_trop <- rls_trop[Lat05_trop[, .(taxon, period, Lat05, Lon05, site05, Temp05)], on= .(taxon, period)]
-
-## Tropical species optimum and southern 
-rls_trop[, cum_abun:= cumsum(total),,
-         by = .(taxon, period, side)]
-
-# Calculate midway point and 95th percentiles
-rls_trop[, ':=' (abun_mid = round(max(cum_abun) * 0.5),
-                 abun_95 = round(max(cum_abun) * 0.95)), 
-         by = .(taxon, period, side)]
-
-# Choose the latitude associated to the minimum difference between the midway point and the cumulative site abundance, for each taxon, period and side.
-Latskew_trop <- rls_trop[, .(min_dif = abs(abun_mid - cum_abun), 
-                             cum_abun, abun_mid, 
-                             Latskew = latitude,
-                             Lonskew = longitude,
-                             siteskew = site_code,
-                             Tempskew = mean_sst), 
-                         by = .(taxon, period, side)][order(taxon, period, side, min_dif)][, .SD[1], by = .(taxon, period, side)]
-
-# Choose the latitude associated to the minimum difference between the 95th percentile and the cumulative site abundance, for each taxon and period.
-Lat95_trop <- rls_trop[, .(min_dif = abs(abun_95 - cum_abun), 
-                           cum_abun, abun_95, 
-                           Lat95 = latitude,
-                           Lon95 = longitude,
-                           site95 = site_code,
-                           Temp95 = mean_sst), 
-                       by = .(taxon, period, side)][order(taxon, period, side, min_dif)][, .SD[1], by = .(taxon, period, side)]
-
-# Join to main rls subset
-rls_trop <- rls_trop[Latskew_trop[, .(taxon, period, side, Latskew, Lonskew, siteskew, Tempskew)], on= .(taxon, period, side)]
-rls_trop <- rls_trop[Lat95_trop[, .(taxon, period, side, Lat95, Lon95, site95, Temp95)], on= .(taxon, period, side)]
-
-## Temperate species
-# Species occuring only on one side
-# Calculate cumulative sum of site abundance by species at each period and side
-# Temperate species have combined east and west lower limits (only if they occur on both sides)
-# List temperate species which are found on only one side
-temp_1side <- rls[guild == "temperate", .(taxon = unique(taxon)), by = .(side)][, .N, by = .(taxon)][order(N)][N < 2]
-
-rls_temp1 <- rls[taxon %in% temp_1side$taxon]
-
-rls_temp1[, cum_abun:= cumsum(total),
-          by = .(taxon, period, side)]
+rls[, cum_abun:= cumsum(total),
+          by = .(taxon, period, guild)]
 
 # Calculate midway point, 5th and 95th percentiles
-rls_temp1[, ':=' (abun_mid = round(max(cum_abun) * 0.5),
-                  abun_5 = round(max(cum_abun) * 0.05),
-                  abun_95 = round(max(cum_abun) * 0.95)), 
-          by = .(taxon, period, side)]
+rls[, ':=' (abun_mid = max(cum_abun) * 0.5,
+                  abun_5 = max(cum_abun) * 0.05,
+                  abun_95 = max(cum_abun) * 0.95), 
+          by = .(taxon, period, guild)]
 
 # Choose the latitude associated to the minimum difference between the midway point and the cumulative site abundance, for each taxon, period and side.
-Latskew_temp1 <- rls_temp1[, .(min_dif = abs(abun_mid - cum_abun), 
-                               cum_abun, abun_mid, 
+Latskew <- rls[, .(min_dif = abs(abun_mid - cum_abun), 
+                              cum_abun, abun_mid, 
                                Latskew = latitude,
                                Lonskew = longitude,
                                siteskew = site_code,
                                Tempskew = mean_sst), 
-                           by = .(taxon, period, side)][order(taxon, period, side, min_dif)][, .SD[1], by = .(taxon, period, side)]
+                           by = .(taxon, period, guild)][order(taxon, period, guild, min_dif)][, .SD[1], by = .(taxon, period, guild)]
 
 # Join to main rls subset
-rls_temp1 <- rls_temp1[Latskew_temp1[, .(taxon, period, side, Latskew, Lonskew, siteskew, Tempskew)], on= .(taxon, period, side)]
+rls <- rls[Latskew[, .(taxon, period, guild, Latskew, Lonskew, siteskew, Tempskew)], on= .(taxon, period, guild)]
 
 # Choose the latitude associated to the minimum difference between the 5th percentile and the cumulative site abundance, for each taxon and period.
-Lat05_temp1 <- rls_temp1[, .(min_dif = abs(abun_5 - cum_abun), 
+Lat05 <- rls[, .(min_dif = abs(abun_5 - cum_abun), 
                              cum_abun, abun_5, 
                              Lat05 = latitude,
                              Lon05 = longitude,
                              site05 = site_code,
                              Temp05 = mean_sst), 
-                         by = .(taxon, period, side)][order(taxon, period, side, min_dif)][, .SD[1], by = .(taxon, period, side)]
+                        by = .(taxon, period, guild)][order(taxon, period, guild, min_dif)][, .SD[1], by = .(taxon, period, guild)]
 
 # Join to main rls subset
-rls_temp1 <- rls_temp1[Lat05_temp1[, .(taxon, period, side, Lat05, Lon05, site05, Temp05)], on= .(taxon, period, side)]
+rls <- rls[Lat05[, .(taxon, period, guild, Lat05, Lon05, site05, Temp05)], on= .(taxon, period, guild)]
 
 # Choose the latitude associated to the minimum difference between the 95th percentile and the cumulative site abundance, for each taxon and period.
-Lat95_temp1 <- rls_temp1[, .(min_dif = abs(abun_95 - cum_abun), 
+Lat95 <- rls[, .(min_dif = abs(abun_95 - cum_abun), 
                              cum_abun, abun_95, 
                              Lat95 = latitude,
                              Lon95 = longitude,
                              site95 = site_code,
                              Temp95 = mean_sst), 
-                         by = .(taxon, period, side)][order(taxon, period, side, min_dif)][, .SD[1], by = .(taxon, period, side)]
+                         by = .(taxon, period, guild)][order(taxon, period, guild, min_dif)][, .SD[1], by = .(taxon, period, guild)]
 
 # Join to main rls subset
-rls_temp1 <- rls_temp1[Lat95_temp1[, .(taxon, period, side, Lat95, Lon95, site95, Temp95)], on= .(taxon, period, side)]
-
-# Species occuring on both sides
-# Calculate cumulative sum of site abundance by species at each period and side
-# List temperate species which are found on both sides
-temp_2side <- rls[guild == "temperate", .(taxon = unique(taxon)), by = .(side)][, .N, by = .(taxon)][order(N)][N == 2]
-
-rls_temp2_NO <- rls[taxon %in% temp_2side$taxon]
-
-rls_temp2_NO[, cum_abun:= cumsum(total),
-          by = .(taxon, period, side)]
-
-# Calculate midway point and 5th percentiles
-rls_temp2_NO[, ':=' (abun_mid = round(max(cum_abun) * 0.5),
-                     abun_5 = round(max(cum_abun) * 0.05)), 
-             by = .(taxon, period, side)]
-
-# Choose the latitude associated to the minimum difference between the midway point and the cumulative site abundance, for each taxon, period and side.
-Latskew_temp2 <- rls_temp2_NO[, .(min_dif = abs(abun_mid - cum_abun), 
-                                  cum_abun, abun_mid, 
-                                  Latskew = latitude,
-                                  Lonskew = longitude,
-                                  siteskew = site_code,
-                                  Tempskew = mean_sst), 
-                              by = .(taxon, period, side)][order(taxon, period, side,  min_dif)][, .SD[1], by = .(taxon, period, side)]
-
-# Join to main rls subset
-rls_temp2 <- rls_temp2_NO[Latskew_temp2[, .(taxon, period, side, Latskew, Lonskew, siteskew, Tempskew)], on= .(taxon, period, side)]
-
-# Choose the latitude associated to the minimum difference between the 5th percentile and the cumulative site abundance, for each taxon and period.
-Lat05_temp2 <- rls_temp2_NO[, .(min_dif = abs(abun_5 - cum_abun), 
-                                cum_abun, abun_5, 
-                                Lat05 = latitude,
-                                Lon05 = longitude,
-                                site05 = site_code,
-                                Temp05 = mean_sst), 
-                            by = .(taxon, period, side)][order(taxon, period, side, min_dif)][, .SD[1], by = .(taxon, period, side)]
-
-# Join to main rls subset
-rls_temp2 <- rls_temp2[Lat05_temp2[, .(taxon, period, side, Lat05, Lon05, site05, Temp05)], on= .(taxon, period, side)]
-
-# The southern limits for these species are combined
-rls_temp2_S <- rls[taxon %in% temp_2side$taxon]
-
-rls_temp2_S[, cum_abun:= cumsum(total),
-            by = .(taxon, period)]
-
-# Calculate midway point, 5th and 95th percentiles
-rls_temp2_S[, ':=' (abun_95 = round(max(cum_abun) * 0.95)), 
-            by = .(taxon, period)]
-
-# Choose the latitude associated to the minimum difference between the 95th percentile and the cumulative site abundance, for each taxon and period.
-Lat95_temp2 <- rls_temp2_S[, .(min_dif = abs(abun_95 - cum_abun), 
-                               cum_abun, abun_95, 
-                               Lat95 = latitude,
-                               Lon95 = longitude,
-                               site95 = site_code,
-                               Temp95 = mean_sst), 
-                           by = .(taxon, period)][order(taxon, period, min_dif)][, .SD[1], by = .(taxon, period)]
-
-# Join to main rls subset
-rls_temp2 <- rls_temp2[Lat95_temp2[, .(taxon, period, abun_95, Lat95, Lon95, site95, Temp95)], on= .(taxon, period)]
-
-rls <- rbind(rls_trop, rls_temp1, rls_temp2) #nrow = 174,111
+rls <- rls[Lat95[, .(taxon, period, guild, Lat95, Lon95, site95, Temp95)], on= .(taxon, period, guild)]
 ```
 
 ### Analysis
@@ -388,107 +248,87 @@ rls <- rbind(rls_trop, rls_temp1, rls_temp2) #nrow = 174,111
 ```{r}
 ## Order by limit and category
 # Abundance weighted quantiles
-rls_trop_N_wt <- rls[guild == "tropical", 
-                     .(taxon, class, guild, max_length, presence, mobility,
-                       site_code, latitude, longitude, ecoregion,
-                       period, total, mean_sst, 
-                       lat = Lat05,
-                       lat_abun = abun_5,
-                       lon = Lon05,
-                       site = site05,
-                       temp = Temp05,
-                       method = "abundance weighted quantiles",
-                       limit = "northern",
-                       side = "both")]
-rls_temp_N_wt <- rls[guild == "temperate", 
-                     .(taxon, class, guild, max_length, presence, mobility,
-                       site_code, latitude, longitude, ecoregion,
-                       period, side, total, mean_sst,
-                       lat = Lat05,
-                       lat_abun = abun_5,
-                       lon = Lon05,
-                       site = site05,
-                       temp = Temp05,
-                       method = "abundance weighted quantiles",
-                       limit = "northern")]
-rls_opt_wt <- rls[, .(taxon, class, guild, max_length, presence, mobility,
-                      site_code, latitude, longitude, ecoregion,
-                      period, side, total, mean_sst,
-                      lat = Latskew,
-                      lat_abun = abun_mid,
-                      lon = Lonskew,
-                      site = siteskew,
-                      temp = Tempskew,
-                      method = "abundance weighted quantiles",
-                      limit = "optimum")]
-rls_S_wt <- rls[guild == "tropical" | taxon %in% temp_1side$taxon, 
-                .(taxon, class, guild, max_length, presence, mobility,
-                  site_code, latitude, longitude, ecoregion,
-                  period, side, total, mean_sst,
-                  lat = Lat95,
-                  lat_abun = abun_95,
-                  lon = Lon95,
-                  site = site95,
-                  temp = Temp95,
-                  method = "abundance weighted quantiles",
-                  limit = "southern")]
-rls_temp_S_wt <- rls[taxon %in% temp_2side$taxon, 
-                     .(taxon, class, guild, max_length, presence, mobility,
-                       site_code, latitude, longitude, ecoregion,
-                       period, total, mean_sst, 
-                       lat = Lat95,
-                       lat_abun = abun_95,
-                       lon = Lon95,
-                       site = site95,
-                       temp = Temp95,
-                       method = "abundance weighted quantiles",
-                       limit = "southern",
-                       side = "both")]
+rls_N <- rls[, 
+             .(taxon, class, guild, max_length, presence, mobility,
+               site_code, latitude, longitude, N_site,
+               period, year_i, year_f, dt,
+               total, mean_sst, 
+               lat = Lat05,
+               lat_abun = abun_5,
+               lon = Lon05,
+               site = site05,
+               temp = Temp05,
+               limit = "northern")]
 
-rls <- rbind(rls_trop_N_wt, rls_temp_N_wt, rls_opt_wt, rls_S_wt, rls_temp_S_wt) #nrow = 522,333
+rls_S <- rls[, 
+             .(taxon, class, guild, max_length, presence, mobility,
+               site_code, latitude, longitude, N_site,
+               period, year_i, year_f, dt,
+               total, mean_sst, 
+               lat = Lat95,
+               lat_abun = abun_95,
+               lon = Lon95,
+               site = site95,
+               temp = Temp95,
+               limit = "southern")]
 
-# Calculate dSST at each site using the heatwave periods
-rls_sites <- rls[period == "preheatwave",
-                 .(sst_t1 = mean(mean_sst)),
-                 by = .(site_code, latitude, longitude, ecoregion)][rls[period == "postheatwave",
-                                                             .(sst_t2 = mean(mean_sst)),
-                                                             by = .(site_code)], on = .(site_code), nomatch = NULL]
+rls <- rbind(rls_N, rls_S) #nrow = 202,210; 977 sites, 699 species 
 
-rls_sites <- rls_sites[, .(latitude,
-                           longitude,
-                           ecoregion,
-                           dSST = sst_t2 - sst_t1), 
-                       by = .(site_code)] # nrow = 928
+## Remove unnecessary datasets
+rm(Lat05, Latskew, Lat95,
+   rls.raw, 
+   species_list,
+   rls_N, rls_S)
+```
 
-### Calculate latitudinal changes in limits, dispersion index and population trends
-rls_summary <- rls[period == "preheatwave" & 
-                     latitude > (lat - 0.5) & latitude < (lat + 0.5), # latitude = lat +/- 0.5; approximate latitude to limit data
-                   .(lat1 = unique(lat), lon1 = unique(lon), site1 = unique(site), 
-                     temp1 = unique(temp), 
-                     total1 = mean(total)),
-                   by = .(taxon, class, guild, max_length, presence, mobility, side, limit, method)][rls[period == "postheatwave" & 
-                                                                                                           latitude > (lat - 0.5) & latitude < (lat + 0.5), # approximate latitude to limit data 
-                                                                                                         .(lat2 = unique(lat), lon2 = unique(lon), site2 = unique(site), 
-                                                                                                           temp2 = unique(temp), 
-                                                                                                           total2 = mean(total)),
-                                                                                                         by = .(taxon, class, guild, max_length, presence, mobility, side, limit, method)], on = .(taxon, class, guild, max_length, presence, mobility, side, limit, method)] #nrow = 3,915
 
-rls_summary <- rls_summary[, ':=' (lat = lat1,
-                                   lon = lon1,
-                                   site = site1,
-                                   dLat = lat2 - lat1,
+#### Calculate changes in periods
+```{r}
+### Calculate latitudinal changes for each species' limits, dispersion index and population trends
+rls_summary_t1 <- rls[period == "t1", 
+                      .(lat1 = unique(lat), lon1 = unique(lon), site1 = unique(site), 
+                        temp1 = unique(temp), 
+                        total_log1 = log(unique(lat_abun) + 1)),
+                      by = .(taxon, limit,
+                             # include factors of interest
+                             class, guild, max_length, presence, mobility, N_site)] # nrow = 1,394
+
+
+rls_summary_t2 <- rls[period == "t2", 
+                      .(lat2 = unique(lat), lon2 = unique(lon), site2 = unique(site), 
+                        temp2 = unique(temp), 
+                        total_log2 = log(unique(lat_abun) + 1)),
+                      by = .(taxon, limit,
+                             #include factors of interest
+                             class, guild, max_length, presence, mobility, 
+                             N_site)] # nrow = 1,394
+
+rls_summary <- rls_summary_t1[rls_summary_t2, on = .(taxon, class, guild, max_length, presence, mobility, limit)] #nrow = 1,394
+
+rls_summary <- rls_summary[, ':=' (dLat = lat2 - lat1,
                                    dLon = lon2 - lon1,
                                    dTemp = temp2 - temp1,
-                                   pop_trend = log(total2 / total1))]
+                                   pop_trend = total_log2 - total_log1)]
 
-rls_summary <- rls_summary[!is.na(dLat)] #nrow = 3,676
+rls_summary <- rls_summary[!is.na(dLat)] #nrow = 1,390
 
-# Add dSST and ecoregion data
-rls_summary <- rls_summary[rls_sites[, .(ecoregion, dSST), by = .(site1 = site_code)], on= .(site1),
-                           nomatch = NULL] #nrow = 2,364
+# Organize dataset
+rls_summary <- rls_summary[, .(taxon, class, 
+                               guild, limit, 
+                               lat1, lat2, dLat,
+                               lon1, lon2, dLon,
+                               site1, site2, N_site,
+                               temp1, temp2, dTemp,
+                               total_log1, total_log2, pop_trend,
+                               max_length, presence, mobility)]
+
+# Remove species that are errors
+errors <- c("Eocallionymus papilio", "Chelmonops truncatus", "Pteraeolidia ianthina", "Istigobius rigilius", "Cheilodipterus quinquelineatus", "Orectolobus halei", "Oxycomanthus bennetti", "Comanthus tasmaniae", "Dotalabrus aurantiacus")
+
+rls_summary <- rls_summary[!which(taxon %in% errors)] #nrow = 1,372
 
 # Save dataset for corrections and checking of species limits
-write.csv(rls_summary[, !21:23][limit != "optimum"], "rls_summary.csv", row.names = FALSE)
+write.csv(rls_summary, paste0(dir, "/chapter1/rls_summary.csv"), row.names = FALSE)
 ```
 
 #### Statistical analysis
@@ -514,25 +354,26 @@ write.csv(rls_summary[, !21:23][limit != "optimum"], "rls_summary.csv", row.name
 #### Plots
 ```{r}
 # Create factors
-rls_summary <- rls_summary[, ':=' (side = factor(side, levels = c("west", "both", "east")),
-                                   guild = factor(guild, levels = c("tropical", "temperate")),
-                                   ecoregion = factor(ecoregion),
+rls_summary <- rls_summary[, ':=' (guild = factor(guild, levels = c("tropical", "temperate")),
                                    class = factor(ifelse(class == "Actinopterygii", "fish", "invertebrate"), levels = c("fish", "invertebrate")),
                                    presence = factor(presence, levels = c("common", "rare")),
                                    mobility = factor(mobility),
                                    limit = factor(limit, levels = c("northern", "optimum", "southern")))]
+```
 
+##### Summary Plots
+```{r}
 ## Main data distribution
-rls_summary_bp <- ggplot(rls_summary[limit != "optimum"], 
+rls_summary_bp <- ggplot(rls_summary, 
                          aes(x = guild, y = dLat, col = guild)) +
   geom_boxplot() +
   geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(limit ~ side) +
-  labs(y = "dLat", title = "Latitudinal changes before and after 2016 heatwave") +
+  facet_grid(limit ~.) +
+  labs(y = "dLat", title = "Latitudinal changes in species limits") +
   theme_bw()
 
 # Averages
-rls_means_wt <- rls_summary[limit != "optimum", 
+rls_means_wt <- rls_summary[, 
                             .(N = NROW(dLat),
                               dLat_mean = mean(dLat),
                               dLat_sd = sd(dLat),
@@ -540,7 +381,7 @@ rls_means_wt <- rls_summary[limit != "optimum",
                               dTemp_mean = mean(dTemp),
                               dTemp_sd = sd(dTemp),
                               dTemp_se = sd(dTemp) / sqrt(NROW(dTemp))),
-                            by = .(side, limit, guild)]
+                            by = .(limit, guild)]
 
 rls_means_plot_wt <- ggplot(rls_means_wt,
                             aes(x = guild, y = dLat_mean, col = guild)) +
@@ -549,8 +390,8 @@ rls_means_plot_wt <- ggplot(rls_means_wt,
                     ymax = dLat_mean + dLat_se),
                 width = 0.2, position = position_dodge(width = 0.3)) +
   geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(limit ~ side) +
-  labs(y = "dLat", title = "Average latitudinal displacement before and after 2016 heatwave") +
+  facet_grid(limit ~.) +
+  labs(y = "dLat", title = "Average latitudinal displacement of species limits") +
   theme_bw()
 
 library(ggpubr)
@@ -558,20 +399,113 @@ library(ggpubr)
 ggarrange(rls_summary_bp, rls_means_plot_wt,
           nrow = 2, ncol = 1)
 
+# Circle of Australia
+rls_summary <- rls_summary[, region:= ifelse(lat1 > -27 & lon1 < 147, "NW",
+                                             ifelse(lat1 < -27 & lon1 < 115, "Sw",
+                                                    ifelse(lat1 %between% c(-40, 30) & lon1 %between% c(115, 147), "S",
+                                                           ifelse(lat1 %between% c(-40, -27) & lon1 > 147, "SE", 
+                                                                  ifelse(lat1 > -27 & lon1 > 147, "NE", "TAS"))))),
+                           by = .(taxon, limit)]
 
-## Site distribution and temperature map
+rls_means_region <- rls_summary[, 
+                                .(N = NROW(dLat),
+                                  dLat_mean = mean(dLat),
+                                  dLat_sd = sd(dLat),
+                                  dLat_se = sd(dLat) / sqrt(NROW(dLat)),
+                                  dTemp_mean = mean(dTemp),
+                                  dTemp_sd = sd(dTemp),
+                                  dTemp_se = sd(dTemp) / sqrt(NROW(dTemp))),
+                                by = .(limit, guild, region)]
 
+rls_means_region_plot <- ggplot(rls_means_region,
+                                aes(x = region, y = dLat_mean, col = guild)) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                    ymax = dLat_mean + dLat_se),
+                width = 0.2, position = position_dodge(width = 0.3)) +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(limit ~.) +
+  labs(y = "dLat", title = "Average latitudinal displacement of species limits") +
+  theme_bw()
+
+```
+
+##### Species wallpaper
+```{r}
 library(sf) # processing spatial vector data
 library(raster) # manipulating rasters
 library(terra) # spatial data analysis
 library(gstat) # producing inverse distance weighted means
+
+# Species wallpapers
+taxon_list <- rls_summary[limit != "optimum"][order(-abs(dLat))][, .SD[1:50]]$taxon
 
 # Create simple features objects and a spatial grid for interpolation
 aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
 crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
 aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
 
-rls_sites_sf <- st_as_sf(rls_summary, coords = c("lon", "lat"), crs = crs(aus_pols))
+ggplot() +
+  # Rasters
+  geom_sf(data = aus_sf) +
+  
+  # sites included in analysis
+  geom_point(data = rls[limit != "optimum"][taxon %in% taxon_list], 
+             aes(x = longitude, y = latitude, shape = side),
+             size = 3) +
+  
+  # Select shapes to display
+  scale_shape_manual(values = c("east" = 1, "west" = 2)) +
+  
+  # Limit lines
+  geom_hline(data = rls[limit != "optimum"][taxon %in% taxon_list],
+             aes(yintercept = lat, col = limit, lty = side)) +
+  
+  # East/west division
+  geom_vline(xintercept = 142.5, lty = "dashed") +
+  annotate("text", x = 150, y = -7, label = "east") +
+  annotate("text", x = 132, y = -7, label = "west") +
+  
+  # Facet by taxon
+  facet_wrap(vars(taxon, period)) +
+  
+  ylim(-44, -7) +
+  xlim(110, 160) +
+  theme_bw()
+```
+
+
+##### Site distribution and temperature map
+
+```{r}
+library(sf) # processing spatial vector data
+library(raster) # manipulating rasters
+library(terra) # spatial data analysis
+library(gstat) # producing inverse distance weighted means
+
+# Calculate dSST at each site using the heatwave periods
+rls_sites <- rls[period == "t1",
+                 .(sst_t1 = mean(mean_sst)),
+                 by = .(site_code, latitude, longitude)][rls[period == "t2",
+                                                             .(sst_t2 = mean(mean_sst)),
+                                                             by = .(site_code)], on = .(site_code), nomatch = NULL]
+
+rls_sites <- rls_sites[, .(latitude,
+                           longitude,
+                           sst_t1, sst_t2,
+                           dSST = sst_t2 - sst_t1), 
+                       by = .(site_code)] # nrow = 977
+
+# Add dSST data
+rls_summary <- rls_summary[rls_sites[, .(latitude, longitude, dSST), by = .(site1 = site_code)], on= .(site1),
+                           nomatch = NULL] #nrow = 1,372
+
+# Create simple features objects and a spatial grid for interpolation
+aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
+crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
+aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
+
+rls_sites_sf <- st_as_sf(rls_summary, coords = c("longitude", "latitude"), crs = crs(aus_pols))
 
 grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
   st_as_sfc() %>% 
@@ -611,36 +545,32 @@ site_dSST_plot <- ggplot() +
   geom_sf(data = aus_sf) +
   
   # sites included in analysis
-  geom_point(data = rls_sites, 
+  geom_point(data = rls_summary, 
              aes(x = longitude, y = latitude),
              shape = 1, col = "black", size = 3) +
-  
-  # East/west division
-  geom_vline(xintercept = 142.5, lty = "dashed") +
-  annotate("text", x = 150, y = -7, label = "east") +
-  annotate("text", x = 132, y = -7, label = "west") +
   
   # manual color scale
   scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
                        midpoint = 0,
-                       breaks = seq(-0.5, 0.5, 0.25),
-                       limits = c(min(pnts$dSST), max(pnts$dSST))) +
+                       breaks = seq(-0.38, 2.5, 2.87),
+                       limits = c(-0.38, 2.5)) +
   
   ylim(-44, -7) +
   xlim(110, 160) +
-  labs(fill = "dSST", title = "Site distribution and temperature change before and after the 2016 heatwave") +
+  labs(fill = "dSST", title = "Site distribution and temperature change") +
   theme_bw()
 
 
 ## dLat maps
 
+# Northern
 # Create simple features objects and a spatial grid for interpolation
 aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
 crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
 aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
 
-rls_dLat <- rls_summary[, .(lon, lat, dLat)]
-rls_dLat_sf <- st_as_sf(rls_dLat, coords = c("lon", "lat"), crs = crs(aus_pols))
+rls_dLat <- rls_summary[limit == "northern", .(longitude, latitude, dLat)]
+rls_dLat_sf <- st_as_sf(rls_dLat, coords = c("longitude", "latitude"), crs = crs(aus_pols))
 
 grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
   st_as_sfc() %>% 
@@ -674,40 +604,133 @@ pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
 colnames(pnts) <- c("lon", "lat", "dLat")
 
 # Plot
-dLat_plot <- ggplot() +
+dLatN_plot <- ggplot() +
   # Rasters
   geom_raster(data= pnts, aes(lon, lat, fill = dLat)) +
   geom_sf(data = aus_sf) +
   
-  # sites included in analysis
-  geom_point(data = rls_summary, 
-             aes(x = lon, y = lat, shape = guild),
-             size = 3) +
+  # manual color scale
+  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
+                       midpoint = 0,
+                       breaks = seq(-6.1, 5.3, 2.28),
+                       limits = c(-6.1, 5.3)) +
   
-  # Select shapes to display
-  scale_shape_manual(values = c("tropical" = 1, "temperate" = 2)) +
-  
-  # East/west division
-  geom_vline(xintercept = 142.5, lty = "dashed") +
-  annotate("text", x = 150, y = -7, label = "east") +
-  annotate("text", x = 132, y = -7, label = "west") +
+  ylim(-44, -7) +
+  xlim(110, 160) +
+  labs(fill = "dLat", title = "Average latitudinal changes: northern limits") +
+  theme_bw()
+
+# Southern
+# Create simple features objects and a spatial grid for interpolation
+aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
+crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
+aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
+
+rls_dLat <- rls_summary[limit == "southern", .(longitude, latitude, dLat)]
+rls_dLat_sf <- st_as_sf(rls_dLat, coords = c("longitude", "latitude"), crs = crs(aus_pols))
+
+grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
+  st_as_sfc() %>% 
+  st_make_grid(
+  cellsize = c(1, 1), # 1 degree cell size
+  what = "centers"
+  ) %>%
+  st_as_sf() %>%
+  cbind(., st_coordinates(.)) %>% 
+  st_drop_geometry() %>% 
+  mutate(Z = 0) %>%
+  raster::rasterFromXYZ( # Convert to raster object
+    crs = crs(aus_pols)
+  )
+
+# Fit an inverse distance weighted mean model
+fit_IDW <- gstat::gstat(
+  formula = dLat ~ 1,
+  maxdist = 220, vdist = T, #radius of 2 degrees
+  data = as(rls_dLat_sf, "Spatial")
+)
+
+# Make sure data and new data have same CRS
+crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+# Interpolate
+interp_IDW <- interpolate(grd, fit_IDW) 
+
+# Convert raster to points
+pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
+colnames(pnts) <- c("lon", "lat", "dLat")
+
+# Plot
+dLatS_plot <- ggplot() +
+  # Rasters
+  geom_raster(data= pnts, aes(lon, lat, fill = dLat)) +
+  geom_sf(data = aus_sf) +
   
   # manual color scale
   scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
                        midpoint = 0,
-                       breaks = seq(-3, 3, 1.5),
-                       limits = c(-3, 3)) +
+                       breaks = seq(-6, 4, 1.6),
+                       limits = c(-6, 4)) +
   
   ylim(-44, -7) +
   xlim(110, 160) +
-  labs(fill = "dLat", title = "Average latitudinal changes following the 2016 heatwave") +
+  labs(fill = "dLat", title = "Average latitudinal changes: southern limits") +
   theme_bw()
 
 # Combine maps
+dLat_plot <- ggarrange(dLatN_plot, dLatS_plot,
+                       nrow = 2, ncol = 1)
 ggarrange(site_dSST_plot, dLat_plot,
           nrow = 1, ncol = 2)
+```
 
 
+##### Comparing extreme values
+```{r}
+rls_ext <- fread(paste0(dir, "/chapter1/rls_summary_ext.csv")) #nrows = 1,634,614
+
+rls_summary[, type:= "normal"]
+rls_ext[, type:= "extreme"]
+
+rls_ext <- rls_ext[taxon %in% rls_summary$taxon]
+
+rls_summary_both <- rls_summary[, !c(13, 21)][rls_ext[, .(dLat_ext = dLat), by = .(taxon, limit)], on = .(taxon, limit)][, dLat_dif:= dLat_ext - dLat, by = .(taxon, limit)]
+
+rls_summary_comb <- rbind(rls_summary[, !c(13, 21)], rls_ext)
+rls_summary_comb <- rls_summary_comb[taxon %in% rls_summary_both[abs(dLat_dif) > 3]$taxon]
+
+
+rls_summary_comb <- rls_summary_comb[order(-type, limit, -dLat)]
+rls_summary_comb$taxon <- factor(rls_summary_comb$taxon, levels = unique(rls_summary_comb$taxon))
+
+ggplot(rls_summary_comb, aes(x = taxon, y = dLat, col = type, shape = guild)) +
+  geom_point() +
+  facet_grid(limit ~.)
+
+# Averages
+rls_means_wt <- rls_summary_comb[, 
+                            .(N = NROW(dLat),
+                              dLat_mean = mean(dLat),
+                              dLat_sd = sd(dLat),
+                              dLat_se = sd(dLat) / sqrt(NROW(dLat))),
+                            by = .(limit, guild, type)]
+
+rls_means_plot_wt <- ggplot(rls_means_wt,
+                            aes(x = type, y = dLat_mean, col = guild)) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                    ymax = dLat_mean + dLat_se),
+                width = 0.2, position = position_dodge(width = 0.3)) +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(limit ~.) +
+  labs(y = "dLat", title = "Average latitudinal displacement of species limits") +
+  theme_bw()
+
+```
+
+
+##### Regression plots
+```{r}
 # dLat vs dSST regression
 dLat_dSST_plot <- ggplot(rls_summary[limit != "optimum"],
                          aes(x = dSST, y = dLat, col = guild)) +
@@ -715,7 +738,7 @@ dLat_dSST_plot <- ggplot(rls_summary[limit != "optimum"],
   geom_smooth(method = 'glm', color = "black") +
   geom_hline(yintercept = 0, lty = "dashed") +
   facet_grid(guild + limit ~ side, scales = "free") +
-  labs(title = "Latitudinal displacement in relation to site-level temperature change") +
+  labs(title = "") +
   theme_bw()
 
 lm(
@@ -766,6 +789,22 @@ lm(
 
 ## Thermal niche and SGIs
 
+# Read thermal niche and SGI data
+thermal_niche <- fread(paste0(dir, "/Raw Data/Thermal niche.csv")) #nrows = 4,465
+sgi_dt <- fread(paste0(dir, "/Raw Data/SGIs.csv")) #nrows = 26,904
+
+rls_summary_thermal <- thermal_niche[, .(taxon = `SPECIES_NAME`, upper_thermal = `95th percentile`)][rls_summary, on= .(taxon), nomatch = NULL]
+rls_summary_SGI <- sgi_dt[, .(taxon = `SPECIES_NAME`, SGI)][rls_summary, on= .(taxon), nomatch = NULL]
+
+# Divide native vs non-native Australian species based on upper thermal limit
+# Set thermal threshold to the av annual temperature of the warmest site
+thresh <- rls_sites[, max(sst_t1)]
+
+rls_summary_thermal[, type:= ifelse(upper_thermal < thresh, "aus", "indo")]
+
+# or split at latitude -15
+rls_summary_thermal[limit == "northern", type2:= ifelse(lat1 < -15, "aus", "indo")]
+
 stat_box_data <- function(y, upper_limit = max(rls_summary$dLat) * 1.15) {
   return( 
     data.frame(
@@ -776,28 +815,41 @@ stat_box_data <- function(y, upper_limit = max(rls_summary$dLat) * 1.15) {
   )
 }
 
-N_limit_dist_plot <- ggplot(rls_summary[guild == "tropical" & limit == "northern"], 
-                            aes(x = ecoregion, y = dLat)) +
-  geom_boxplot() +
+N_limit_dist_plot <- ggplot(rls_summary_thermal[guild == "tropical" & limit == "northern"], 
+       aes(x = type, y = dLat)) +
+    geom_boxplot() +
+    geom_hline(yintercept = 0, lty = "dashed") +
+    stat_summary(
+        fun.data = stat_box_data, 
+        geom = "text", 
+        hjust = 0.5,
+        vjust = 0.9
+    ) + 
+  facet_wrap(vars(ecoregion)) +
+    labs(y = "dLat", title = "Latitudinal changes before and after 2016 heatwave") +
+    theme_bw()
+
+therm_table <- rls_summary_thermal[guild == "tropical" & limit == "northern", 
+                          .(N = NROW(dLat),
+                            dLat_mean = mean(dLat),
+                            dLat_sd = sd(dLat),
+                            dLat_se = sd(dLat) / sqrt(NROW(dLat))),
+                          by = .(type, ecoregion)]
+
+therm_plot <- ggplot(therm_table,
+                         aes(x = type, y = dLat_mean)) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                    ymax = dLat_mean + dLat_se),
+                width = 0.2, position = position_dodge(width = 0.3)) +
   geom_hline(yintercept = 0, lty = "dashed") +
-  stat_summary(
-    fun.data = stat_box_data, 
-    geom = "text", 
-    hjust = 0.5,
-    vjust = 0.9
-  ) + 
-  labs(y = "dLat", title = "Latitudinal changes before and after 2016 heatwave") +
+  facet_wrap(vars(ecoregion)) +
+  labs(y = "", title = "") +
   theme_bw()
-
-thermal_niche <- fread("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/Raw Data/Thermal niche.csv") #nrows = 4,465
-sgi_dt <- fread("C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/Raw Data/SGIs.csv") #nrows = 26,904
-
-rls_summary_thermal <- thermal_niche[, .(taxon = `SPECIES_NAME`, upper_thermal = `95th percentile`)][rls_summary, on= .(taxon), nomatch = NULL]
-rls_summary_SGI <- sgi_dt[, .(taxon = `SPECIES_NAME`, SGI)][rls_summary, on= .(taxon), nomatch = NULL]
 
 
 N_limit_thermal <- ggplot(rls_summary_thermal[limit == "northern" & guild == "tropical"],
-                              aes(x = upper_thermal, y = dLat)) +
+                              aes(x = upper_thermal, y = dLat, col = type)) +
   geom_point() +
   geom_smooth(method = 'glm', color = "black") +
   geom_hline(yintercept = 0, lty = "dashed") +
