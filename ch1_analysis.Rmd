@@ -70,21 +70,12 @@ rls.raw[, taxon:= ifelse(taxon == "Cenolia glebosus",
 ```
 
 
-Add trait information relevant to analysis.
+Add guild information from the traits matrix.
 ```{r}
-# Extract thermal guild info
-traits <- traits[, .(taxon = `CURRENT_SPECIES_NAME`,
-                     guild = `thermal guild`,
-                     trophic_group = `Trophic group2`,
-                     max_length = `MaxLength`,
-                     water_column = `Water column`,
-                     habitat = `Habitat`,
-                     therm_max = `Thermal_95thmax`,
-                     therm_mid = `ThermalMP_5_95`,
-                     sgi = `SGI`)]
-
 # Join datasets
-rls <- rls.raw[traits, on= "taxon", nomatch = NULL] # nrow = 1,575,443
+rls <- rls.raw[traits[, .(taxon = `CURRENT_SPECIES_NAME`,
+                          guild = `thermal guild`)], 
+               on= "taxon", nomatch = NULL] # nrow = 1,575,443
 ```
 
 Add information on SST at each survey. We are using the average of the 2-years daily SST leading to the survey date. This is to account for periods of extreme or anomalous weather events.
@@ -117,7 +108,7 @@ rls <- rls[class %in% c("Asteroidea", "Cephalopoda", "Crinoidea", "Echinoidea", 
 #NOTE: changed Chondrichtyes to Elasmobranchii, Crinoidea and Holothuroidea not found in raw dataset
 
 # Subset to data from 2010 onwards
-rls <- rls[year(survey_date) >= "2010"] #nrow = 1,105,909
+rls <- rls[year(survey_date) >= "2010"] #nrow = 1,105,661
 ```
 
 #### Data adjustments
@@ -130,13 +121,13 @@ rls_sites <- rls[, lapply(.SD, mean),
                  .SDcols = c("latitude", "longitude")]
 
 
-rls <- rls[, c(1:8, 11:41)][rls_sites, on= .(site_code)] 
+rls <- rls[, c(1:8, 11:34)][rls_sites, on= .(site_code)] 
 ```
 
 Adjust method and block data. There should only be two blocks in each transect, and cryptic fish and invertebrates are only found in method 2.
 ```{r Adjust method and block, message=FALSE, warning=FALSE}
 # Remove block 0
-rls <- rls[block != 0] #nrow = 1,243,197
+rls <- rls[block != 0] #nrow = 1,105,659
 
 # Remove fish species in M2 from M1 (cryptic fish)
 rls[method == 1 & taxon %in% rls[method == 2 & class == "Actinopterygii"]$taxon]$method <- 2
@@ -151,10 +142,9 @@ rls <- rls[, .(total = sum(total)),
            by = .(taxon, survey_id,
                   # add factors of interest
                   class, guild, 
-                  trophic_group, max_length, water_column, habitat, therm_max, sgi, 
                   site_code, latitude, longitude,
                   survey_date, 
-                  mean_sst)] #nrow = 512,363
+                  mean_sst)] #nrow = 457,244
 ```
 
 #### Site selection and time periods
@@ -173,9 +163,9 @@ rls <- rls[, ':=' (year_i = min(year(survey_date)),
 rls[, mean(dt)] # average time period: 7.16 years
 
 # Remove data in between those time periods and those sites that were only surveyed once. Also removed sites that were not found in both periods
-rls <- rls[year(survey_date) == year_i | year(survey_date) == year_f] #nrow = 286,931
-rls <- rls[dt > 0] #nrow = 212,511
-rls <- rls[site_code %in% rls[period == "t1"]$site_code & site_code %in% rls[period == "t2"]$site_code] #nrow = 180,342
+rls <- rls[year(survey_date) == year_i | year(survey_date) == year_f] #nrow = 273,508
+rls <- rls[dt > 0] #nrow = 205,153
+rls <- rls[site_code %in% rls[period == "t1"]$site_code & site_code %in% rls[period == "t2"]$site_code] #nrow = 178,124
 ```
 
 #### Further filtering
@@ -185,7 +175,7 @@ To reduce noise we set taxon-level filters.
 ```{r}
 # Discard species occurring in less than 30 sites.
 species_list <- rls[, .(site_code = unique(site_code)), by = .(taxon)][, .(N_site = .N), by = .(taxon)]
-rls <- rls[species_list, on= .(taxon)][N_site >= 30] # nrow = 166,854
+rls <- rls[species_list, on= .(taxon)][N_site >= 30] # nrow = 164,603
 
 # Categorize rare and common species based on whether they appear in less than 80 sites in the first time period
 rls <- rls[, presence:= ifelse(N_site < 80, "rare", "common"), 
@@ -199,12 +189,12 @@ rls <- rls[, lapply(.SD, mean), # calculate means for the specified data cols
            by = .(taxon, site_code, period,
                   # include factors of interest
                   class, 
-                  guild, max_length, presence, water_column, trophic_group, habitat, therm_max, sgi, 
+                  guild, presence, 
                   latitude, longitude,
                   year_i, year_f, dt,
                   N_site), # subsets
            .SDcols = c("total", "mean_sst")] # data cols to average
-# nrow = 102,954
+# nrow = 101,044
 ```
 
 ### Calculating distribution limits
@@ -406,17 +396,17 @@ rls_temp2 <- rls_temp2[Lat95_temp2[, .(taxon, period, abun_95, Lat95, Lon95, sit
 ###### Join subsets
 ```{r}
 # Gather all subsets
-rls <- rbind(rls_trop, rls_temp1, rls_temp2) #nrow = 185,120
+rls <- rbind(rls_trop, rls_temp1, rls_temp2) #nrow = 101,044
 ```
 
-### Analysis
+### Producing a working dataset
 
 #### Restructure dataset 
 ```{r}
 ## Order by limit and category
 # Abundance weighted quantiles
 rls_trop_N_wt <- rls[guild == "tropical", 
-                     .(taxon, class, guild, max_length, presence, water_column, trophic_group, habitat, therm_max, sgi,
+                     .(taxon, class, guild, presence, 
                        site_code, latitude, longitude, N_site,
                        period, year_i, year_f, dt,
                        total, mean_sst, 
@@ -428,7 +418,7 @@ rls_trop_N_wt <- rls[guild == "tropical",
                        limit = "northern",
                        side = "both")]
 rls_temp_N_wt <- rls[guild == "temperate", 
-                     .(taxon, class, guild, max_length, presence, water_column, trophic_group, habitat, therm_max, sgi,
+                     .(taxon, class, guild, presence, 
                        site_code, latitude, longitude, N_site,
                        period, side, year_i, year_f, dt,
                        total, mean_sst, 
@@ -440,7 +430,7 @@ rls_temp_N_wt <- rls[guild == "temperate",
                        limit = "northern")]
 
 rls_S_wt <- rls[guild == "tropical" | taxon %in% temp_1side$taxon, 
-                .(taxon, class, guild, max_length, presence, water_column, trophic_group, habitat, therm_max, sgi,
+                .(taxon, class, guild, presence,
                   site_code, latitude, longitude, N_site,
                   period, side, year_i, year_f, dt,
                   total, mean_sst, 
@@ -451,7 +441,7 @@ rls_S_wt <- rls[guild == "tropical" | taxon %in% temp_1side$taxon,
                   temp = Temp95,
                   limit = "southern")]
 rls_temp_S_wt <- rls[taxon %in% temp_2side$taxon, 
-                     .(taxon, class, guild, max_length, presence, water_column, trophic_group, habitat, therm_max, sgi,
+                     .(taxon, class, guild, presence,
                        site_code, latitude, longitude, N_site,
                        period, year_i, year_f, dt,
                        total, mean_sst, 
@@ -463,7 +453,7 @@ rls_temp_S_wt <- rls[taxon %in% temp_2side$taxon,
                        limit = "southern",
                        side = "both")]
 
-rls <- rbind(rls_trop_N_wt, rls_temp_N_wt, rls_S_wt, rls_temp_S_wt) #nrow = 555,360
+rls <- rbind(rls_trop_N_wt, rls_temp_N_wt, rls_S_wt, rls_temp_S_wt) #nrow = 202,088
 ```
 
 
@@ -473,33 +463,34 @@ rls <- rbind(rls_trop_N_wt, rls_temp_N_wt, rls_S_wt, rls_temp_S_wt) #nrow = 555,
 rls_summary_t1 <- rls[period == "t1", 
                       .(lat1 = unique(lat), lon1 = unique(lon), site1 = unique(site), 
                         temp1 = unique(temp), 
-                        total_log1 = log(unique(lat_abun) + 1)),
+                        total_log1 = log(unique(lat_abun)) + 1),
                       by = .(taxon, limit,
                              side,
                              # include factors of interest
-                             class, guild, max_length, presence, water_column, trophic_group, habitat, therm_max, sgi, N_site)] # nrow = 1,402
+                             class, guild, presence, 
+                             N_site)] # nrow = 1,968
 
 
 rls_summary_t2 <- rls[period == "t2", 
                       .(lat2 = unique(lat), lon2 = unique(lon), site2 = unique(site), 
                         temp2 = unique(temp), 
-                        total_log2 = log(unique(lat_abun) + 1)),
+                        total_log2 = log(unique(lat_abun)) + 1),
                       by = .(taxon, limit,
                              side,
                              #include factors of interest
-                             class, guild, max_length, presence, water_column, trophic_group, habitat, therm_max, sgi, 
-                             N_site)] # nrow = 2,364
+                             class, guild, presence, 
+                             N_site)] # nrow = 2,098
 
 rls_summary <- rls_summary_t1[rls_summary_t2, on = .(taxon, 
                                                      side,
-                                                     class, guild, max_length, presence, water_column, trophic_group, habitat, therm_max, sgi, limit)] #nrow = 1,402
+                                                     class, guild, presence, limit)] #nrow = 1,950
 
 rls_summary <- rls_summary[, ':=' (dLat = lat2 - lat1,
                                    dLon = lon2 - lon1,
                                    dTemp = temp2 - temp1,
                                    pop_trend = total_log2 - total_log1)]
 
-rls_summary <- rls_summary[!is.na(dLat)] #nrow = 1,398
+rls_summary <- rls_summary[!is.na(dLat)] #nrow = 1,931
 
 # Organize dataset
 rls_summary <- rls_summary[, .(taxon, class, 
@@ -510,8 +501,25 @@ rls_summary <- rls_summary[, .(taxon, class,
                                site1, site2, N_site,
                                temp1, temp2, dTemp,
                                total_log1, total_log2, pop_trend,
-                               max_length, presence, water_column, trophic_group, habitat, therm_max, sgi)]
+                               presence)]
 ```
+
+#### Add traits of interest
+```{r}
+# Rename and join traits of interest
+rls_summary <- rls_summary[traits[, .(taxon = `CURRENT_SPECIES_NAME`,
+                                      range = `Range`,
+                                      trophic_level = `Trophic Level`,
+                                      trophic_group = `Trophic group2`,
+                                      max_length = `MaxLength`,
+                                      water_column = `Water column`,
+                                      habitat = `Habitat`,
+                                      max_depth = `Max depth`,
+                                      therm_max = `Thermal_95thmax`,
+                                      therm_mid = `ThermalMP_5_95`,
+                                      sgi = `SGI`)], on = .(taxon), nomatch = NULL]
+```
+
 
 #### Add bioregions based on latitude and longitude extremes
 ```{r}
@@ -528,7 +536,7 @@ rls_summary <- rls_summary[, region:= ifelse(lat1 > -23, "NA",
 # Merge site data and SST by survey_id
 rls_sites <- rls.raw[site_code %in% c(rls_summary$site1, rls_summary$site2)][, .(site_code, latitude, longitude), by = .(survey_id, survey_date)][sst_data[, .(survey_id, mean_sst)], on= .(survey_id), nomatch = NULL] #nrow = 967,347
 
-rls_sites <- rls_sites[!is.na(mean_sst)] #nrow = 820,853
+rls_sites <- rls_sites[!is.na(mean_sst)] #nrow = 888,389
 
 # Linear regression to obtain mean SST change
 rls_sites <- rls_sites[, .(sst_lm = list(lm(mean_sst ~ year(survey_date))),
@@ -548,7 +556,7 @@ rls_sites <- rls_sites[, dSST:= sst_t2 - sst_t1]
 
 # Add dSST data
 rls_summary <- rls_summary[rls_sites[, .(latitude, longitude, dSST), by = .(site1 = site_code)], on= .(site1),
-                           nomatch = NULL] #nrow = 1,398
+                           nomatch = NULL] #nrow = 1,931
 ```
 
 
@@ -557,7 +565,7 @@ rls_summary <- rls_summary[rls_sites[, .(latitude, longitude, dSST), by = .(site
 # Remove species that are errors
 errors <- c("Cheilodipterus quinquelineatus", "Chelmonops truncatus", "Cirripectes castaneus", "Cirripectes chelomatus", "Cirripectes filamentosus", "Cirripectes hutchinsi", "Cirripectes stigmaticus", "Comanthus tasmaniae", "Dotalabrus aurantiacus", "Enneapterygius atrogulare", "Enneapterygius rufopileus", "Enneapterygius similis", "Eocallionymus papilio", "Fusigobius duospilus", "Fusigobius neophytus", "Gnatholepis anjerensis", "Gnatholepis cauerensis", "Gobiodon quinquestrigatus", "Halichoeres erdmanni", "Istigobius rigilius", "Parapercis pacifica", "Parapercis queenslandica", "Pteraeolidia ianthina", "Thalassoma purpureum", "Orectolobus halei", "Oxycomanthus bennetti")
 
-rls_summary <- rls_summary[!which(taxon %in% errors)] #nrow = 1,346
+rls_summary <- rls_summary[!which(taxon %in% errors)] #nrow = 1,861
 
 # Save dataset for corrections and checking of species limits
 write.csv(rls_summary[order(taxon)], paste0(dir, "/chapter1/rls_summary.csv"), row.names = FALSE)
@@ -586,21 +594,47 @@ write.csv(rls_summary[order(taxon)], paste0(dir, "/chapter1/rls_summary.csv"), r
 
 #### Plots
 ```{r}
+# Remove unnecessary datasets
+rm(Lat05_temp1,
+   Lat05_temp2,
+   Lat05_trop,
+   Lat95_temp1,
+   Lat95_temp2,
+   Lat95_trop,
+   Latskew_temp1,
+   Latskew_temp2,
+   Latskew_trop,
+   rls_S_wt,
+   rls_summary_t1,
+   rls_summary_t2,
+   rls_temp_N_wt,
+   rls_temp_S_wt,
+   rls_temp1,
+   rls_temp2,
+   rls_temp2_NO,
+   rls_temp2_S,
+   rls_trop,
+   rls_trop_N_wt,
+   species_list,
+   temp_1side,
+   temp_2side)
+
 # Create factors
 rls_summary <- rls_summary[, ':=' (guild = factor(guild, levels = c("tropical", "temperate")),
                                    class = factor(ifelse(class %in% c("Actinopterygii", "Elasmobranchii"), "fish", "invertebrate"), levels = c("fish", "invertebrate")),
                                    presence = factor(presence, levels = c("common", "rare")),
                                    water_column = factor(water_column),
                                    trophic_group = factor(trophic_group),
-                                   habitat = factor(habitat),
+                                   habitat = factor(ifelse(habitat == "Coral", "coral",
+                                                           ifelse(habitat == "Sand", "sand", habitat)), levels = c("coral", "rock", "sand", "water column")),
                                    region = factor(region, levels = c("NA", "WA", "SA", "SE", "TAS")),
-                                   limit = factor(limit, levels = c("northern", "optimum", "southern")))]
+                                   limit = factor(limit, levels = c("northern", "southern")))]
 ```
 
 ##### Summary Plots
 ```{r}
 ## Main data distribution
-rls_summary_bp <- ggplot(rls_summary, aes(x = guild, y = dLat, col = guild)) +
+rls_summary_bp <- ggplot(rls_summary, aes(x = class, y = dLat, col = guild)) +
   geom_boxplot() +
   geom_hline(yintercept = 0, lty = "dashed") +
   facet_grid(limit ~.) +
@@ -617,10 +651,10 @@ rls_means_wt <- rls_summary[,
                               dTemp_mean = mean(dTemp),
                               dTemp_sd = sd(dTemp),
                               dTemp_se = sd(dTemp) / sqrt(NROW(dTemp))),
-                            by = .(limit, guild)]
+                            by = .(limit, guild, class)]
 
 rls_means_plot_wt <- ggplot(rls_means_wt,
-                            aes(x = guild, y = dLat_mean, col = guild)) +
+                            aes(x = class, y = dLat_mean, col = guild)) +
   geom_point(position = position_dodge(width = 0.3)) +
   geom_errorbar(aes(ymin = dLat_mean - dLat_se,
                     ymax = dLat_mean + dLat_se),
@@ -635,30 +669,6 @@ library(ggpubr)
 
 ggarrange(rls_summary_bp, rls_means_plot_wt,
           nrow = 2, ncol = 1)
-
-# Regional means
-rls_means_region <- rls_summary[, 
-                                .(N = NROW(dLat),
-                                  dLat_mean = mean(dLat),
-                                  dLat_sd = sd(dLat),
-                                  dLat_se = sd(dLat) / sqrt(NROW(dLat)),
-                                  dTemp_mean = mean(dTemp),
-                                  dTemp_sd = sd(dTemp),
-                                  dTemp_se = sd(dTemp) / sqrt(NROW(dTemp))),
-                                by = .(limit, guild, region)]
-
-rls_means_region_plot <- ggplot(rls_means_region,
-                                aes(x = region, y = dLat_mean, col = guild)) +
-  geom_point(position = position_dodge(width = 0.3)) +
-  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                    ymax = dLat_mean + dLat_se),
-                width = 0.2, position = position_dodge(width = 0.3)) +
-  geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(limit ~.) +
-  labs(y = "Mean changes in latitudinal limits (° latitude)") +
-  theme_bw() +
-  guides(colour = "none")
-
 ```
 
 ##### Species wallpaper
@@ -706,7 +716,7 @@ ggplot() +
 ```
 
 
-##### Regional map with boxplots
+##### Regional map with means
 ```{r}
 library(sf) # processing spatial vector data
 library(raster) # manipulating rasters
@@ -723,8 +733,8 @@ rls_sites_sf <- st_as_sf(rls_summary, coords = c("longitude", "latitude"), crs =
 grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
   st_as_sfc() %>% 
   st_make_grid(
-  cellsize = c(1, 1), # 1 degree cell size
-  what = "centers"
+    cellsize = c(1, 1), # 1 degree cell size
+    what = "centers"
   ) %>%
   st_as_sf() %>%
   cbind(., st_coordinates(.)) %>% 
@@ -789,6 +799,29 @@ aus_map <- ggplot() +
   theme_bw() +
   theme(legend.position = "bottom", legend.direction = "horizontal") 
 
+# Regional means
+rls_means_region <- rls_summary[, 
+                                .(N = NROW(dLat),
+                                  dLat_mean = mean(dLat),
+                                  dLat_sd = sd(dLat),
+                                  dLat_se = sd(dLat) / sqrt(NROW(dLat)),
+                                  dTemp_mean = mean(dTemp),
+                                  dTemp_sd = sd(dTemp),
+                                  dTemp_se = sd(dTemp) / sqrt(NROW(dTemp))),
+                                by = .(limit, guild, region, class)]
+
+rls_means_region_plot <- ggplot(rls_means_region,
+                                aes(x = class, y = dLat_mean, col = guild)) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                    ymax = dLat_mean + dLat_se),
+                width = 0.2, position = position_dodge(width = 0.3)) +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(limit ~ region) +
+  labs(y = "Mean changes in latitudinal limits (° latitude)") +
+  theme_bw() +
+  guides(colour = "none")
+
 # Set guild color scheme
 guild_cols <- c(tropical = "#F8766D",
                 temperate = "#00BFC4")
@@ -804,6 +837,7 @@ NA_plot <- ggplot(rls_means_region[region == "NA" & N > 10], aes(x = limit, y = 
             hjust = 1.3,
             col = "black") +
   geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(.~ class) +
   labs(y = "dLat", subtitle = "a", fontface = "bold") +
   guides(colour = "none") +
   theme_bw()
@@ -819,6 +853,7 @@ WA_plot <- ggplot(rls_means_region[region == "WA" & N > 10], aes(x = limit, y = 
             hjust = -0.4,
             col = "black") + 
   geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(.~ class) +
   labs(y = "dLat", subtitle = "b", fontface = "bold") +
   guides(colour = "none") +
   theme_bw()
@@ -834,6 +869,7 @@ SA_plot <- ggplot(rls_means_region[region == "SA" & N > 10], aes(x = limit, y = 
             hjust = -0.2,
             col = "black") +
   geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(.~ class) +
   labs(y = "dLat", subtitle = "c", fontface = "bold") +
   guides(colour = "none") +
   theme_bw()
@@ -849,6 +885,7 @@ SE_plot <- ggplot(rls_means_region[region == "SE" & N > 10], aes(x = limit, y = 
             hjust = -0.3,
             col = "black") +
   geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(.~ class) +
   labs(y = "dLat", subtitle = "d", fontface = "bold") +
   guides(colour = "none") +
   theme_bw()
@@ -864,6 +901,7 @@ TAS_plot <- ggplot(rls_means_region[region == "TAS" & N > 10], aes(x = limit, y 
             hjust = -0.2,
             col = "black") +
   geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(.~ class) +
   labs(y = "dLat", subtitle = "e", fontface = "bold") +
   guides(col = "none") +
   theme_bw()
@@ -871,17 +909,15 @@ TAS_plot <- ggplot(rls_means_region[region == "TAS" & N > 10], aes(x = limit, y 
 library(cowplot)
 
 plot_grid(
-    NULL, NA_plot, NULL, 
-    WA_plot, aus_map, SE_plot,
-    NULL, SA_plot, TAS_plot,
-    ncol = 3, align = "v", axis = "tb",
-    scale = c(0.1, 0.6, 0.1,
-              0.6, 1.4, 0.6,
-              0.1, 0.6, 0.6)
+  plot_grid(NULL, WA_plot, SA_plot, ncol = 1),
+  plot_grid(NA_plot, NULL, aus_map, ncol = 1, rel_heights = c(1, 0, 2)),
+  plot_grid(NULL, SE_plot, TAS_plot, ncol = 1),
+  ncol = 3
 )
+
 ```
 
-##### Site distribution and temperature map
+##### IDW maps of dLat 
 ```{r}
 library(sf) # processing spatial vector data
 library(raster) # manipulating rasters
@@ -893,72 +929,11 @@ aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
 crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
 aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
 
-rls_sites_sf <- st_as_sf(rls_summary, coords = c("longitude", "latitude"), crs = crs(aus_pols))
+# Northern limit
+# Average dLat by site and remove those with less than 3 data points
+rls_dLat <- rls_summary[limit == "northern"][rls_summary[limit == "northern", .(dLat), by = .(site1, longitude, latitude)][, .N, by = .(site1)], on = .(site1)][N > 2][, .(dLat = mean(dLat)), by = .(site1, longitude, latitude)]
 
-grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
-  st_as_sfc() %>% 
-  st_make_grid(
-  cellsize = c(1, 1), # 1 degree cell size
-  what = "centers"
-  ) %>%
-  st_as_sf() %>%
-  cbind(., st_coordinates(.)) %>% 
-  st_drop_geometry() %>% 
-  mutate(Z = 0) %>%
-  raster::rasterFromXYZ( # Convert to raster object
-    crs = crs(aus_pols)
-  )
-
-# Fit an inverse distance weighted mean model
-fit_IDW <- gstat::gstat(
-  formula = dSST ~ 1,
-  maxdist = 220, vdist = T, #radius of 2 degrees
-  data = as(rls_sites_sf, "Spatial")
-)
-
-# Make sure data and new data have same CRS
-crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
-
-# Interpolate
-interp_IDW <- interpolate(grd, fit_IDW) 
-
-# Convert raster to points
-pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
-colnames(pnts) <- c("lon", "lat", "dSST")
-
-# Plot
-site_dSST_plot <- ggplot() +
-  # Rasters
-  geom_raster(data= pnts, aes(lon, lat, fill = dSST)) +
-  geom_sf(data = aus_sf) +
-  
-  # sites included in analysis
-  geom_point(data = rls_summary, 
-             aes(x = longitude, y = latitude),
-             shape = 1, col = "black", size = 3) +
-  
-  # manual color scale
-  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
-                       midpoint = 0,
-                       breaks = seq(-2, 2, 0.8),
-                       limits = c(-2, 2)) +
-  
-  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 160), label = paste0(seq(110, 160, by = 10), "°E")) +
-  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
-  labs(fill = "dSST", subtitle = "a") +
-  theme_bw()
-
-
-
-## dLat maps
-
-# Northern
-# Create simple features objects and a spatial grid for interpolation
-aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
-crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
-aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
-
-rls_dLat <- rls_summary[limit == "northern", .(longitude, latitude, dLat)]
+# Simple features object
 rls_dLat_sf <- st_as_sf(rls_dLat, coords = c("longitude", "latitude"), crs = crs(aus_pols))
 
 grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
@@ -996,26 +971,24 @@ colnames(pnts) <- c("lon", "lat", "dLat")
 dLatN_plot <- ggplot() +
   # Rasters
   geom_raster(data= pnts, aes(lon, lat, fill = dLat)) +
-  geom_sf(data = aus_sf) +
+  geom_sf(data = st_union(aus_sf)) + # Continent polygon
   
   # manual color scale
   scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
                        midpoint = 0,
-                       breaks = seq(-10, 12.4, 4.4),
-                       limits = c(-10, 12)) +
+                       breaks = seq(-0.82, 2.2, 0.6),
+                       limits = c(-0.82, 2.2)) +
   
   scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 160), label = paste0(seq(110, 160, by = 10), "°E")) +
   scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
-  labs(fill = "dLat", subtitle = "b") +
+  labs(fill = "dLat: N", subtitle = "a") +
   theme_bw()
 
 # Southern
-# Create simple features objects and a spatial grid for interpolation
-aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
-crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
-aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
+# Average dLat by site and remove those with less than 3 data points
+rls_dLat <- rls_summary[limit == "southern"][rls_summary[limit == "southern", .(dLat), by = .(site1, longitude, latitude)][, .N, by = .(site1)], on = .(site1)][N > 2][, .(dLat = mean(dLat)), by = .(site1, longitude, latitude)]
 
-rls_dLat <- rls_summary[limit == "southern", .(longitude, latitude, dLat)]
+# Simple features object
 rls_dLat_sf <- st_as_sf(rls_dLat, coords = c("longitude", "latitude"), crs = crs(aus_pols))
 
 grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
@@ -1053,26 +1026,174 @@ colnames(pnts) <- c("lon", "lat", "dLat")
 dLatS_plot <- ggplot() +
   # Rasters
   geom_raster(data= pnts, aes(lon, lat, fill = dLat)) +
-  geom_sf(data = aus_sf) +
+  geom_sf(data = st_union(aus_sf)) + # Continent polygon
   
   # manual color scale
   scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
                        midpoint = 0,
-                       breaks = seq(-6, 4, 1.6),
-                       limits = c(-6, 4)) +
+                       breaks = seq(-3.3, 4.1, 1.48),
+                       limits = c(-3.3, 4.1)) +
   
   scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 160), label = paste0(seq(110, 160, by = 10), "°E")) +
   scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
-  labs(fill = "dLat", subtitle = "c") +
+  labs(fill = "dLat: S", subtitle = "b") +
   theme_bw()
 
-# Combine maps
-ggarrange(site_dSST_plot, dLatN_plot, dLatS_plot,
-          nrow = 3, ncol = 1)
+
+# CTI maps
+rls_cti <- rls[taxon %in% rls_summary$taxon & site_code %in% rls_sites$site_code][traits[, .(thermal_mid = `ThermalMP_5_95`), by = .(taxon = `CURRENT_SPECIES_NAME`)], on = .(taxon), nomatch = NULL]
+
+rls_cti <- rls_cti[, .(taxon = unique(taxon)), by = .(site_code, latitude, longitude, period, thermal_mid)]
+
+rls_cti <- rls_cti[period == "t1", .(cti_t1 = mean(thermal_mid, na.rm = T)), by = .(site_code, latitude, longitude)][rls_cti[period == "t2", .(cti_t2 = mean(thermal_mid, na.rm = T)), by = .(site_code, latitude, longitude)], on = .(site_code, latitude, longitude)]
+
+rls_cti[, dCTI:= cti_t2 - cti_t1]
+
+rls_cti <- rls_cti[!is.na(dCTI)]
+
+rls_cti <- rls_cti[rls_sites[, .(dSST), by = .(site_code)], on = .(site_code)]
+
+rls_cti <- rls_cti[, region:= ifelse(latitude > -23, "NA",
+                                             ifelse(latitude < -23 & longitude < 120, "WA",
+                                                    ifelse(latitude %between% c(-40, -30) & longitude %between% c(120, 147), "SA",
+                                                           ifelse(latitude %between% c(-40, -23) & longitude > 147, "SE", 
+                                                                  ifelse(latitude > -23 & longitude > 147, "NA", "TAS"))))),
+                           by = .(site_code)]
+
+# Create simple features objects and a spatial grid for interpolation
+rls_dCTI <- rls_cti[, .(longitude, latitude, dCTI)]
+rls_dCTI_sf <- st_as_sf(rls_dCTI, coords = c("longitude", "latitude"), crs = crs(aus_pols))
+
+grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
+  st_as_sfc() %>% 
+  st_make_grid(
+    cellsize = c(1, 1), # 1 degree cell size
+    what = "centers"
+  ) %>%
+  st_as_sf() %>%
+  cbind(., st_coordinates(.)) %>% 
+  st_drop_geometry() %>% 
+  mutate(Z = 0) %>%
+  raster::rasterFromXYZ( # Convert to raster object
+    crs = crs(aus_pols)
+  )
+
+# Fit an inverse distance weighted mean model
+fit_IDW <- gstat::gstat(
+  formula = dCTI ~ 1,
+  maxdist = 220, vdist = T, #radius of 2 degrees
+  data = as(rls_dCTI_sf, "Spatial")
+)
+
+# Make sure data and new data have same CRS
+crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+# Interpolate
+interp_IDW <- interpolate(grd, fit_IDW) 
+
+# Convert raster to points
+pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
+colnames(pnts) <- c("lon", "lat", "dCTI")
+
+# Plot
+dCTI_plot <- ggplot() +
+  # Rasters
+  geom_raster(data= pnts, aes(lon, lat, fill = dCTI)) +
+  geom_sf(data = st_union(aus_sf)) + # Continent polygon
+  
+  # manual color scale
+  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
+                       midpoint = 0,
+                       breaks = seq(-0.6, 0.6, 0.24),
+                       limits = c(-0.6, 0.6)) +
+  
+  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 160), label = paste0(seq(110, 160, by = 10), "°E")) +
+  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
+  labs(fill = "dCTI", subtitle = "c") +
+  theme_bw()
+
+
+# CTI maps
+rls_cgi <- rls[taxon %in% rls_summary$taxon & site_code %in% rls_sites$site_code][traits[, .(sgi = `SGI`), by = .(taxon = `CURRENT_SPECIES_NAME`)], on = .(taxon), nomatch = NULL]
+
+rls_cgi <- rls_cgi[, .(taxon = unique(taxon)), by = .(site_code, latitude, longitude, period, sgi)]
+
+rls_cgi <- rls_cgi[period == "t1", .(cgi_t1 = mean(sgi, na.rm = T)), by = .(site_code, latitude, longitude)][rls_cgi[period == "t2", .(cgi_t2 = mean(sgi, na.rm = T)), by = .(site_code, latitude, longitude)], on = .(site_code, latitude, longitude)]
+
+rls_cgi[, dCGI:= cgi_t2 - cgi_t1]
+
+rls_cgi <- rls_cgi[!is.na(dCGI)]
+
+rls_cgi <- rls_cgi[rls_sites[, .(dSST), by = .(site_code)], on = .(site_code)]
+
+rls_cgi <- rls_cgi[, region:= ifelse(latitude > -23, "NA",
+                                             ifelse(latitude < -23 & longitude < 120, "WA",
+                                                    ifelse(latitude %between% c(-40, -30) & longitude %between% c(120, 147), "SA",
+                                                           ifelse(latitude %between% c(-40, -23) & longitude > 147, "SE", 
+                                                                  ifelse(latitude > -23 & longitude > 147, "NA", "TAS"))))),
+                           by = .(site_code)]
+
+# Create simple features objects and a spatial grid for interpolation
+rls_dCGI <- rls_cgi[, .(longitude, latitude, dCGI)][!is.na(dCGI)]
+rls_dCGI_sf <- st_as_sf(rls_dCGI, coords = c("longitude", "latitude"), crs = crs(aus_pols))
+
+grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
+  st_as_sfc() %>% 
+  st_make_grid(
+    cellsize = c(1, 1), # 1 degree cell size
+    what = "centers"
+  ) %>%
+  st_as_sf() %>%
+  cbind(., st_coordinates(.)) %>% 
+  st_drop_geometry() %>% 
+  mutate(Z = 0) %>%
+  raster::rasterFromXYZ( # Convert to raster object
+    crs = crs(aus_pols)
+  )
+
+# Fit an inverse distance weighted mean model
+fit_IDW <- gstat::gstat(
+  formula = dCGI ~ 1,
+  maxdist = 220, vdist = T, #radius of 2 degrees
+  data = as(rls_dCGI_sf, "Spatial")
+)
+
+# Make sure data and new data have same CRS
+crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+# Interpolate
+interp_IDW <- interpolate(grd, fit_IDW) 
+
+# Convert raster to points
+pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
+colnames(pnts) <- c("lon", "lat", "dCGI")
+
+# Plot
+dCGI_plot <- ggplot() +
+  # Rasters
+  geom_raster(data= pnts, aes(lon, lat, fill = dCGI)) +
+  geom_sf(data = st_union(aus_sf)) + # Continent polygon
+  
+  # manual color scale
+  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
+                       midpoint = 0,
+                       breaks = seq(-3, 3, 1.2),
+                       limits = c(-3, 3)) +
+  
+  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 160), label = paste0(seq(110, 160, by = 10), "°E")) +
+  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
+  labs(fill = "dCGI", subtitle = "d") +
+  theme_bw()
+
+
+# Collate all maps
+ggarrange(dLatN_plot, dCTI_plot,
+          dLatS_plot, dCGI_plot,
+          nrow = 2, ncol = 2)
 ```
 
 
-##### Regression plots
+##### dSST regression plots
 ```{r}
 # Select the 10 northernmost sites for each species' limits
 ext_sites_N <- rls[, .(site_code = unique(site_code)), by = .(latitude, taxon, period)][order(taxon, period, -latitude)][, .SD[1:10], by = .(taxon, period)]
@@ -1084,7 +1205,7 @@ ext_sites_N <- ext_sites_N[rls_sites[, .(dSST), by = .(site_code)], on = .(site_
 ext_sites_N <- ext_sites_N[, .(dSST = mean(dSST)), by = .(taxon, period)]
 
 # Add dLat values
-ext_sites_N <- ext_sites_N[rls_summary[limit == "northern", .(dLat, region, guild, max_length, presence, water_column, trophic_group, habitat, therm_max, sgi), by = .(taxon)], on = .(taxon)]
+ext_sites_N <- ext_sites_N[rls_summary[limit == "northern", .(dLat, region, guild, class, pop_trend, presence, range, trophic_level, trophic_group, max_length, water_column, habitat, therm_max, therm_mid, sgi), by = .(taxon)], on = .(taxon)]
 
 # Select the 10 southernmost sites for each species' limits
 ext_sites_S <- rls[, .(site_code = unique(site_code)), by = .(latitude, taxon, period)][order(taxon, period, latitude)][, .SD[1:10], by = .(taxon, period)]
@@ -1096,11 +1217,11 @@ ext_sites_S <- ext_sites_S[rls_sites[, .(dSST), by = .(site_code)], on = .(site_
 ext_sites_S <- ext_sites_S[, .(dSST = mean(dSST)), by = .(taxon, period)]
 
 # Add dLat values
-ext_sites_S <- ext_sites_S[rls_summary[limit == "southern", .(dLat, region, guild, max_length, presence, water_column, trophic_group, habitat, therm_max, sgi), by = .(taxon)], on = .(taxon)]
+ext_sites_S <- ext_sites_S[rls_summary[limit == "southern", .(dLat, region, guild, class, pop_trend, presence, range, trophic_level, trophic_group, max_length, water_column, habitat, therm_max, therm_mid, sgi), by = .(taxon)], on = .(taxon)]
 
-ext_sites_N <- ext_sites_N[, .(taxon, guild, max_length, presence, water_column, trophic_group, habitat, therm_max, sgi, region, dLat, dSST, limit = "northern")]
+ext_sites_N <- ext_sites_N[, .(taxon, guild, class, pop_trend, presence, range, trophic_level, trophic_group, max_length, water_column, habitat, therm_max, therm_mid, sgi, region, dLat, dSST, limit = "northern")]
 
-ext_sites_S <- ext_sites_S[, .(taxon, guild, max_length, presence, water_column, trophic_group, habitat, therm_max, sgi, region, dLat, dSST, limit = "southern")]
+ext_sites_S <- ext_sites_S[, .(taxon, guild, class, pop_trend, presence, range, trophic_level, trophic_group, max_length, water_column, habitat, therm_max, therm_mid, sgi, region, dLat, dSST, limit = "southern")]
 
 ext_sites <- rbind(ext_sites_N, ext_sites_S)
 
@@ -1110,23 +1231,143 @@ dLat_dSST_plot <- ggplot(ext_sites,
   geom_point() +
   geom_smooth(method = 'glm', color = "black") +
   geom_hline(yintercept = 0, lty = "dashed") +
-  facet_wrap(region ~ guild, scales = "free") +
+  facet_wrap(region ~ guild + limit, scales = "free") +
   labs(title = "") +
   theme_bw()
 
-# Regions following temperature cues
-ggplot(ext_sites[presence == "rare"][region == "NA" & limit == "northern" | region == "WA" & limit == "northern" | region == "TAS" & limit == "southern"],
-       aes(x = dSST, y = dLat)) +
+# Subsets showing expected dLat ~ dSST relationships are:
+# NA trop N
+# (WA trop S)
+# WA temp N
+# SA temp N
+# SA temp S
+# SE temp S
+# (TAS temp S)
+
+# GAM model to test traits
+library(mgcv)
+
+# Note gam/glm might not run with NAs (pop_trend, trophic_level & SGI)
+gam(dLat ~ dSST + pop_trend + presence + range + trophic_level + trophic_group + (log(max_length) + 1) + water_column + habitat + therm_max + therm_mid + sgi,
+    data = ext_sites[region == "NA" & limit == "northern" & guild == "tropical" | region == "WA" & limit == "northern" & guild == "temperate" | region == "SA" & limit == "northern" & guild == "temperate" | region == "SA" & limit == "southern" & guild == "temperate" | region == "SE" & limit == "southern" & guild == "temperate" | region == "WA" & limit == "southern" & guild == "tropical" | region == "TAS" & limit == "southern" & guild == "temperate"])
+
+# Factors of interest with dSST:
+# region | presence | trophic group
+
+NA_reg <- ggplot(ext_sites[region == "NA" & limit == "northern" & guild == "tropical" & trophic_group %in% c("Benthic invertivore", "Herbivore")], aes(x = dSST, y = dLat, col = guild)) +
+  geom_point() +
+  geom_smooth(method = 'glm', color = "black") +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  scale_color_manual(values = guild_cols) + 
+  facet_grid(.~ trophic_group, scales = "free") +
+  labs(title = "NA northern limits") +
+  guides(col = "none") +
+  theme_bw()
+
+WA_reg <- ggplot(ext_sites[region == "WA" & limit == "northern" & guild == "temperate" & trophic_group %in% c("Benthic invertivore", "Herbivore")], aes(x = dSST, y = dLat, col = guild)) +
+  geom_point() +
+  geom_smooth(method = 'glm', color = "black") +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  scale_color_manual(values = guild_cols) + 
+  facet_grid(.~ trophic_group, scales = "free") +
+  labs(title = "WA northern limits") +
+  guides(col = "none") +
+  theme_bw()
+
+SA_reg <- ggplot(ext_sites[region == "SA" & limit == "southern" & guild == "temperate" & trophic_group %in% c("Benthic invertivore", "Herbivore")], aes(x = dSST, y = dLat, col = guild)) +
+  geom_point() +
+  geom_smooth(method = 'glm', color = "black") +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  scale_color_manual(values = guild_cols) + 
+  facet_grid(.~ trophic_group, scales = "free") +
+  labs(title = "SA southern limits") +
+  guides(col = "none") +
+  theme_bw()
+
+TAS_reg <- ggplot(ext_sites[region == "TAS" & limit == "southern" & guild == "temperate" & trophic_group %in% c("Benthic invertivore", "Herbivore")], aes(x = dSST, y = dLat, col = guild)) +
+  geom_point() +
+  geom_smooth(method = 'glm', color = "black") +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  scale_color_manual(values = guild_cols) + 
+  facet_grid(.~ trophic_group, scales = "free") +
+  labs(title = "TAS southern limits") +
+  guides(col = "none") +
+  theme_bw()
+
+ggarrange(
+  ggarrange(NA_reg,
+            WA_reg,
+            nrow = 2, ncol = 1),
+  ggarrange(SA_reg,
+            TAS_reg,
+            nrow = 2, ncol = 1),
+  nrow = 1, ncol = 2)
+
+rls_summary_wide <-  rls_summary[limit == "northern", .(latN = lat1), by = .(taxon)][rls_summary[limit == "southern", .(latS = lat1), by = .(taxon)], on = .(taxon)]
+```
+
+##### Traits investigation
+```{r}
+# Trophic level 
+ggplot(rls_summary[, .(dLat = mean(dLat)), by = .(trophic_level, limit, guild)],
+       aes(x = trophic_level, y = dLat)) +
     geom_point() +
     geom_smooth(method = 'glm', color = "black") +
     geom_hline(yintercept = 0, lty = "dashed") +
-    facet_wrap(rows = vars(region)) +
+    facet_grid(limit ~ guild) +
     labs(title = "") +
     theme_bw()
 
-glm(dLat ~ dSST + guild + log(max_length + 1) + water_column + trophic_group + habitat + therm_max + sgi,
-    data = ext_sites[presence == "rare"][region == "NA" & limit == "northern" | region == "WA" & limit == "northern" | region == "TAS" & limit == "southern"])
+# range | trophic level | max_length | max depth | therm mid | therm max
+# all display normal distribution, peaks at mid range
+
+gam(abs(dLat) ~ dSST + range + trophic_level + (log(max_length) + 1) + (log(max_depth) + 1) + therm_max + therm_mid,
+    data = rls_summary)
+# Model suggests range, therm_mid and therm_max are the strongest influencers
+
+# What about all traits?
+library(mgcv)
+
+# Fit the GAM model
+model <- gam(abs(dLat) ~ range + trophic_level + trophic_group + (log(max_length) + 1) + (log(max_depth) + 1) + water_column + habitat + therm_max + therm_mid + sgi, 
+             data = rls_summary)
+
+# Extract the coefficient values and variable names from the model
+coefficients <- coef(model)
+variable_names <- names(coefficients)
+standard_errors <- summary.gam(model)$p.table[, "Std. Error"]
+p_values <- summary.gam(model)$p.table[, "Pr(>|t|)"]
+
+# Create a data.table with the coefficient, variable name, and standard error values
+trait_dt <- data.table(trait = variable_names, coef = coefficients, std_err = standard_errors, p_val = p_values)
+
+# Order the data.table by the coefficient values in descending order
+trait_dt <- trait_dt[2:18][order(-coef)]
+
+# Set traits as factors
+trait_dt$trait <- factor(trait_dt$trait, levels = c(trait_dt$trait))
+
+# Plot
+ggplot(trait_dt, aes(x = coef, y = trait, col = ifelse(p_val < 0.01, "Significant", "Not Significant"))) +
+  geom_point() +
+  geom_errorbar(aes(xmin = coef - std_err, xmax = coef + std_err),
+                width = 0.2, position = position_dodge(width = 0.3)) +
+  scale_y_discrete(limits = rev(levels(trait_dt$trait))) + # Reverse the order of the y-axis
+  labs(x = "Coefficient", y = "Trait") +
+  scale_color_manual(values = c("Significant" = "red", "Not Significant" = "black")) +
+  geom_vline(xintercept = 0, lty = "dashed") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+
+
+ggplot(data.table(names(coef(model)), coef(model), ), aes( x = V2, y = factor(V1))) + geom_point() +
+   geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                    ymax = dLat_mean + dLat_se),
+                width = 0.2, position = position_dodge(width = 0.3)) +
 ```
+
+
 
 ##### Temperate investigation
 ```{r}
@@ -1237,6 +1478,55 @@ ggarrange(p2, p1,
           nrow = 1, ncol = 2,
           widths = c(1, 2))
 ```
+
+##### Tropical species investigation
+```{r}
+# Divide species into native and non native Australian by latitude
+rls_trop <- rls_summary[guild == "tropical"]
+rls_trop_native <- rls_trop[limit == "northern", .(native = ifelse(lat1 < -15, "aus", "indo")), by = .(taxon)]
+rls_trop <- rls_trop[rls_trop_native, on = .(taxon)]
+
+ggplot(rls_trop, aes(x = therm_max, y = abs(dLat), col = native)) +
+    geom_point() + 
+  geom_smooth(method = 'glm') + 
+  facet_grid(limit ~.)
+
+glm(dLat ~ dSST + native + limit + (log(max_length) + 1) + presence + water_column + trophic_group + habitat + therm_max + sgi,
+    data = rls_trop)
+
+# Divide species into native and non native Australian by thermal max
+rls_trop <- rls_summary[guild == "tropical"]
+therm_threshold <- rls_sites[, max(sst_t1)]
+rls_trop[, native:= ifelse(therm_mid < therm_threshold, "aus", "indo"), by = .(taxon)]
+rls_trop <- rls_trop[!is.na(native)]
+
+ggplot(rls_trop, aes(x = therm_max, y = abs(dLat), col = native)) +
+    geom_point() + 
+  geom_smooth(method = 'glm') + 
+  facet_grid(limit ~.)
+
+glm(dLat ~ dSST + native + limit + (log(max_length) + 1) + presence + water_column + trophic_group + habitat + therm_max + sgi,
+    data = rls_trop)
+```
+
+
+##### Community thermal index
+```{r}
+ggplot(rls_summary, aes(x = therm_mid, y = dLat)) +
+  geom_point() +
+  geom_smooth() +
+  facet_grid(guild ~ region)
+
+glm(dLat ~ dSST + guild + limit + (log(max_length) + 1) + presence + habitat + water_column + trophic_group + max_depth + therm_mid + therm_max + sgi,
+   data = rls_summary[region == "NA"])
+
+#NA -> temperate, southern, max_length, habitat, trophic group
+
+ggplot(rls_summary, aes(x = limit, y = dLat, col = guild)) +
+  geom_boxplot() +
+  facet_grid(region ~ presence)
+```
+
 
 
 ##### Comparing extreme values
