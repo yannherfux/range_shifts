@@ -160,7 +160,7 @@ rls <- rls[, ':=' (year_i = min(year(survey_date)),
                    dt = max(year(survey_date)) - min(year(survey_date))),
            by = .(site_code)]
 
-rls[, mean(dt)] # average time period: 7.16 years
+rls[, mean(dt)] # average time period: 6.77 years
 
 # Remove data in between those time periods and those sites that were only surveyed once. Also removed sites that were not found in both periods
 rls <- rls[year(survey_date) == year_i | year(survey_date) == year_f] #nrow = 273,508
@@ -563,7 +563,7 @@ rls_summary <- rls_summary[rls_sites[, .(latitude, longitude, dSST), by = .(site
 #### Remove dodgy limits/species errors and save dataset
 ```{r}
 # Remove species that are errors
-errors <- c("Cheilodipterus quinquelineatus", "Chelmonops truncatus", "Cirripectes castaneus", "Cirripectes chelomatus", "Cirripectes filamentosus", "Cirripectes hutchinsi", "Cirripectes stigmaticus", "Comanthus tasmaniae", "Dotalabrus aurantiacus", "Enneapterygius atrogulare", "Enneapterygius rufopileus", "Enneapterygius similis", "Eocallionymus papilio", "Fusigobius duospilus", "Fusigobius neophytus", "Gnatholepis anjerensis", "Gnatholepis cauerensis", "Gobiodon quinquestrigatus", "Halichoeres erdmanni", "Istigobius rigilius", "Parapercis pacifica", "Parapercis queenslandica", "Pteraeolidia ianthina", "Thalassoma purpureum", "Orectolobus halei", "Oxycomanthus bennetti")
+errors <- c("Atypichthys strigatus", "Cheilodipterus quinquelineatus", "Chelmonops truncatus", "Chromis nitida", "Cirripectes castaneus", "Cirripectes chelomatus", "Cirripectes filamentosus", "Cirripectes hutchinsi", "Cirripectes stigmaticus", "Comanthus tasmaniae", "Dotalabrus aurantiacus", "Echinostrephus aciculatus", "Enneapterygius atrogulare", "Enneapterygius rufopileus", "Enneapterygius similis", "Eocallionymus papilio", "Fusigobius duospilus", "Fusigobius neophytus", "Gnatholepis anjerensis", "Gnatholepis cauerensis", "Gobiodon quinquestrigatus", "Halichoeres erdmanni", "Holothuria whitmaei", "Istigobius rigilius", "Parapercis pacifica", "Parapercis queenslandica", "Pteraeolidia ianthina", "Thalassoma purpureum", "Tropiometra afra", "Orectolobus halei", "Oxycomanthus bennetti")
 
 rls_summary <- rls_summary[!which(taxon %in% errors)] #nrow = 1,861
 
@@ -776,8 +776,8 @@ aus_map <- ggplot() +
   # manual color scale
   scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
                        midpoint = 0,
-                       breaks = seq(-2, 2, 0.8),
-                       limits = c(-2, 2)) +
+                       breaks = seq(-1.45, 1.80, 0.65),
+                       limits = c(-1.45, 1.80)) +
   
   # regional divisions
   geom_segment(aes(x = 114, y = -23, xend = 110, yend = -23), linewidth = 2) +
@@ -1308,6 +1308,19 @@ rls_summary_wide <-  rls_summary[limit == "northern", .(latN = lat1), by = .(tax
 
 ##### Traits investigation
 ```{r}
+# General traits investigation
+variables <- names(rls_summary[, c(8, 21:31)])[-1]
+
+# Create individual scatterplots
+plots <- lapply(variables, function(var) {
+    ggplot(rls_summary, aes_string(x = var, y = "dLat")) +
+        geom_point() + facet_grid(limit ~.) +
+        ggtitle(paste("Scatterplot of dLat vs", var))
+})
+
+# Display the scatterplots
+ggarrange(plotlist = plots, cols = 3)  # Adjust the number of columns as needed
+
 # Trophic level 
 ggplot(rls_summary[, .(dLat = mean(dLat)), by = .(trophic_level, limit, guild)],
        aes(x = trophic_level, y = dLat)) +
