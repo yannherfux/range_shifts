@@ -518,6 +518,9 @@ rls_summary <- rls_summary[traits[, .(taxon = `CURRENT_SPECIES_NAME`,
                                       therm_max = `Thermal_95thmax`,
                                       therm_mid = `ThermalMP_5_95`,
                                       sgi = `SGI`)], on = .(taxon), nomatch = NULL]
+
+# Add family
+rls_summary <- rls.raw[, .(family = unique(family)), by = .(taxon)][rls_summary, on = .(taxon), nomatch = NULL] #nrow = 1,934
 ```
 
 
@@ -534,29 +537,23 @@ rls_summary <- rls_summary[, region:= ifelse(lat1 > -23, "NA",
 #### Add dSST data
 ```{r}
 # Merge site data and SST by survey_id
-rls_sites <- rls.raw[site_code %in% c(rls_summary$site1, rls_summary$site2)][, .(site_code, latitude, longitude), by = .(survey_id, survey_date)][sst_data[, .(survey_id, mean_sst)], on= .(survey_id), nomatch = NULL] #nrow = 967,347
+rls_sites <- rls.raw[site_code %in% c(rls_summary$site1, rls_summary$site2)][, lapply(.SD, unique), by = .(survey_id, survey_date), .SDcols = c("site_code", "latitude", "longitude")][sst_data[, .(survey_id, mean_sst)], on= .(survey_id), nomatch = NULL] #nrow = 16,609
 
-rls_sites <- rls_sites[!is.na(mean_sst)] #nrow = 888,389
+rls_sites <- rls_sites[!is.na(mean_sst)] #nrow = 11,625
 
-# Linear regression to obtain mean SST change
-rls_sites <- rls_sites[, .(sst_lm = list(lm(mean_sst ~ year(survey_date))),
-                           year_i = min(year(survey_date)),
-                           year_f = max(year(survey_date)),
-                           latitude = mean(latitude),
-                           longitude = mean(longitude)),
-                       by = .(site_code)]
+rls_sites[, ':=' (year_i = min(year(survey_date)),
+                  year_f = max(year(survey_date))),
+          by = .(site_code)]
 
-# Extract sst_t1 and sst_t2
-rls_sites <- rls_sites[, ':=' (sst_t1 = sst_lm[[1]]$coefficients["(Intercept)"] + sst_lm[[1]]$coefficients["year(survey_date)"] * year_i,
-                               sst_t2 = sst_lm[[1]]$coefficients["(Intercept)"] + sst_lm[[1]]$coefficients["year(survey_date)"] * year_f),
-                       by = .(site_code)]
+rls_sites <- rls_sites[year(survey_date) == year_i, .(sst_t1 = mean(mean_sst)),
+                       by = .(site_code, latitude, longitude)][rls_sites[year(survey_date) == year_f, .(sst_t2 = mean(mean_sst)),
+                                                                         by = .(site_code)], on = .(site_code)] #nrow = 838
 
-# Calculate dSST
-rls_sites <- rls_sites[, dSST:= sst_t2 - sst_t1]
+rls_sites[, dSST:= sst_t2 - sst_t1]
 
 # Add dSST data
 rls_summary <- rls_summary[rls_sites[, .(latitude, longitude, dSST), by = .(site1 = site_code)], on= .(site1),
-                           nomatch = NULL] #nrow = 1,931
+                           nomatch = NULL] #nrow = 1,934
 ```
 
 
@@ -565,32 +562,11 @@ rls_summary <- rls_summary[rls_sites[, .(latitude, longitude, dSST), by = .(site
 # Remove species that are errors
 errors <- c("Atypichthys strigatus", "Cheilodipterus quinquelineatus", "Chelmonops truncatus", "Chromis nitida", "Cirripectes castaneus", "Cirripectes chelomatus", "Cirripectes filamentosus", "Cirripectes hutchinsi", "Cirripectes stigmaticus", "Comanthus tasmaniae", "Dotalabrus aurantiacus", "Echinostrephus aciculatus", "Enneapterygius atrogulare", "Enneapterygius rufopileus", "Enneapterygius similis", "Eocallionymus papilio", "Fusigobius duospilus", "Fusigobius neophytus", "Gnatholepis anjerensis", "Gnatholepis cauerensis", "Gobiodon quinquestrigatus", "Halichoeres erdmanni", "Holothuria whitmaei", "Istigobius rigilius", "Parapercis pacifica", "Parapercis queenslandica", "Pteraeolidia ianthina", "Thalassoma purpureum", "Tropiometra afra", "Orectolobus halei", "Oxycomanthus bennetti")
 
-rls_summary <- rls_summary[!which(taxon %in% errors)] #nrow = 1,861
+rls_summary <- rls_summary[!which(taxon %in% errors)] #nrow = 1,846
 
 # Save dataset for corrections and checking of species limits
 write.csv(rls_summary[order(taxon)], paste0(dir, "/chapter1/rls_summary.csv"), row.names = FALSE)
 ```
-
-
-#### Statistical analysis
-```{r}
-# Statistical significance
-#t.test(rls_summary[abs(dLat) < 5 & guild == "tropical" & limit == #"northern"]$dLat, mu = 0) # p < 0.05
-#t.test(rls_summary[abs(dLat) < 5 & limit == "southern" & guild == #"tropical" & side == "west"]$dLat, mu = 0) # p < 0.05
-#t.test(rls_summary[abs(dLat) < 5 & limit == "northern" & guild == #"temperate" & side == "west"]$dLat, mu = 0) # p = 0.05
-#t.test(rls_summary[abs(dLat) < 5 & limit == "northern" & guild == #"temperate" & side == "east"]$dLat, mu = 0) # p < 0.05
-
-#rls_summary[abs(dLat) < 5 & limit != "optimum", t.test(dLat, mu = 0), by = .(guild, side, limit)][p.value < 0.05]
-
-
-
-#fit <- aov(dLat ~ 1 + guild + limit + side, data = rls_summary)
-
-#library(multcomp)
-
-#summary(glht(fit, linfct = mcp(guild = "Dunnett")))
-```
-
 
 #### Plots
 ```{r}
@@ -634,13 +610,16 @@ rls_summary <- rls_summary[, ':=' (guild = factor(guild, levels = c("tropical", 
 ##### Summary Plots
 ```{r}
 ## Main data distribution
-rls_summary_bp <- ggplot(rls_summary, aes(x = class, y = dLat, col = guild)) +
-  geom_boxplot() +
+
+# Boxplot
+rls_summary_bp <- ggplot(rls_summary, aes(x = guild, y = dLat, col = guild)) +
+  geom_violin() +
   geom_hline(yintercept = 0, lty = "dashed") +
   facet_grid(limit ~.) +
-  labs(y = "Changes in latitudinal limits (° latitude)", subtitle = "a") +
+  labs(y = "Changes in latitudinal limits (° latitude)", subtitle = "a", x = "") +
   theme_bw() +
   guides(colour = "none")
+
 
 # Averages
 rls_means_wt <- rls_summary[, 
@@ -651,70 +630,35 @@ rls_means_wt <- rls_summary[,
                               dTemp_mean = mean(dTemp),
                               dTemp_sd = sd(dTemp),
                               dTemp_se = sd(dTemp) / sqrt(NROW(dTemp))),
-                            by = .(limit, guild, class)]
-
+                            by = .(limit, guild)]
+# Dotplot
 rls_means_plot_wt <- ggplot(rls_means_wt,
-                            aes(x = class, y = dLat_mean, col = guild)) +
+                            aes(x = guild, y = dLat_mean, col = guild)) +
   geom_point(position = position_dodge(width = 0.3)) +
   geom_errorbar(aes(ymin = dLat_mean - dLat_se,
                     ymax = dLat_mean + dLat_se),
                 width = 0.2, position = position_dodge(width = 0.3)) +
   geom_hline(yintercept = 0, lty = "dashed") +
   facet_grid(limit ~.) +
-  labs(y = "Mean changes in latitudinal limits (° latitude)", subtitle = "b") +
+  labs(x = "", y = "Mean changes in latitudinal limits (° latitude)", subtitle = "b") +
   theme_bw() +
+  guides(colour = "none")
+
+# Regression
+rls_summary_regression <- ggplot(rls_summary, aes(x = dSST, y = dLat, col = guild)) +
+  geom_smooth(method = "glm") +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(limit ~ guild) +
+  labs(x = "Changes in sea-surface temperature (°C)", y = "Changes in latitudinal limits (° latitude)", subtitle = "c") +
+  theme_bw() +
+  theme(strip.text.x = element_blank()) +
   guides(colour = "none")
 
 library(ggpubr)
 
-ggarrange(rls_summary_bp, rls_means_plot_wt,
-          nrow = 2, ncol = 1)
+ggarrange(rls_summary_bp, rls_means_plot_wt, rls_summary_regression,
+          nrow = 3, ncol = 1)
 ```
-
-##### Species wallpaper
-```{r}
-library(sf) # processing spatial vector data
-library(raster) # manipulating rasters
-library(terra) # spatial data analysis
-library(gstat) # producing inverse distance weighted means
-
-# Species wallpapers
-taxon_list <- rls_summary[limit != "optimum"][order(-abs(dLat))][, .SD[1:50]]$taxon
-
-# Create simple features objects and a spatial grid for interpolation
-aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
-crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
-aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
-
-ggplot() +
-  # Rasters
-  geom_sf(data = aus_sf) +
-  
-  # sites included in analysis
-  geom_point(data = rls[limit != "optimum"][taxon %in% taxon_list], 
-             aes(x = longitude, y = latitude, shape = side),
-             size = 3) +
-  
-  # Select shapes to display
-  scale_shape_manual(values = c("east" = 1, "west" = 2)) +
-  
-  # Limit lines
-  geom_hline(data = rls[limit != "optimum"][taxon %in% taxon_list],
-             aes(yintercept = lat, col = limit, lty = side)) +
-  
-  # East/west division
-  geom_vline(xintercept = 142.5, lty = "dashed") +
-  annotate("text", x = 150, y = -7, label = "east") +
-  annotate("text", x = 132, y = -7, label = "west") +
-  
-  # Facet by taxon
-  facet_wrap(vars(taxon, period)) +
-  
-  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 160), label = paste0(seq(110, 160, by = 10), "°E")) +
-  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
-  theme_bw()
-```
-
 
 ##### Regional map with means
 ```{r}
@@ -723,12 +667,34 @@ library(raster) # manipulating rasters
 library(terra) # spatial data analysis
 library(gstat) # producing inverse distance weighted means
 
+site_sst <- fread(paste0(dir, "/Raw Data/site_sst_yearly.csv")) #nrows = 12,570
+
+# Add coordinates
+site_sst <- site_sst[rls[, .(latitude = unique(latitude), longitude = unique(longitude)), by = .(site_code)], on = .(site_code), nomatch = NULL]
+
+# Linear regression to obtain mean SST change throughout the decade
+site_sst <- site_sst[, .(sst_lm = list(lm(mean_sst ~ year)),
+                           year_i = min(year),
+                           year_f = max(year),
+                           latitude = mean(latitude),
+                           longitude = mean(longitude)),
+                       by = .(site_code)]
+
+# Extract sst_t1, sst_t2 and dSST
+site_sst <- site_sst[, ':=' (sst_t1 = sst_lm[[1]]$coefficients["(Intercept)"] + sst_lm[[1]]$coefficients["year"] * year_i,
+                               sst_t2 = sst_lm[[1]]$coefficients["(Intercept)"] + sst_lm[[1]]$coefficients["year"] * year_f,
+                               dSST = sst_lm[[1]]$coefficients["year"]),
+                       by = .(site_code)]
+
+rls_sites <- rls_sites[, dSST:= sst_t2 - sst_t1, by = .(site_code)]
+
+
 # Create simple features objects and a spatial grid for interpolation
 aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
 crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
 aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
 
-rls_sites_sf <- st_as_sf(rls_summary, coords = c("longitude", "latitude"), crs = crs(aus_pols))
+rls_sites_sf <- st_as_sf(site_sst, coords = c("longitude", "latitude"), crs = crs(aus_pols))
 
 grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
   st_as_sfc() %>% 
@@ -760,6 +726,7 @@ interp_IDW <- interpolate(grd, fit_IDW)
 # Convert raster to points
 pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
 colnames(pnts) <- c("lon", "lat", "dSST")
+pnts$dSST <- pnts$dSST * 10 # convert units to dSST/decade
 
 # Plot
 aus_map <- ggplot() +
@@ -776,8 +743,8 @@ aus_map <- ggplot() +
   # manual color scale
   scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
                        midpoint = 0,
-                       breaks = seq(-1.45, 1.80, 0.65),
-                       limits = c(-1.45, 1.80)) +
+                       breaks = seq(-0.2, 0.7, 0.2),
+                       limits = c(-0.2, 0.7)) +
   
   # regional divisions
   geom_segment(aes(x = 114, y = -23, xend = 110, yend = -23), linewidth = 2) +
@@ -795,12 +762,12 @@ aus_map <- ggplot() +
   # adjust axes labels
   scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 160), label = paste0(seq(110, 160, by = 10), "°E")) +
   scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
-  labs(fill = "dSST (°C)", x = NULL, y = NULL) +
+  labs(fill = "dSST per decade (°C)", x = NULL, y = NULL) +
   theme_bw() +
-  theme(legend.position = "bottom", legend.direction = "horizontal") 
+  theme(legend.position = "bottom", legend.direction = "horizontal")  
 
 # Regional means
-rls_means_region <- rls_summary[, 
+rls_means_region <- rls_summary[region != "TAS", 
                                 .(N = NROW(dLat),
                                   dLat_mean = mean(dLat),
                                   dLat_sd = sd(dLat),
@@ -808,7 +775,7 @@ rls_means_region <- rls_summary[,
                                   dTemp_mean = mean(dTemp),
                                   dTemp_sd = sd(dTemp),
                                   dTemp_se = sd(dTemp) / sqrt(NROW(dTemp))),
-                                by = .(limit, guild, region, class)]
+                                by = .(limit, guild, region)]
 
 rls_means_region_plot <- ggplot(rls_means_region,
                                 aes(x = class, y = dLat_mean, col = guild)) +
@@ -822,11 +789,95 @@ rls_means_region_plot <- ggplot(rls_means_region,
   theme_bw() +
   guides(colour = "none")
 
+# Test means are different to 0 with ANOVA
+fit <- aov(dLat ~ 1 + guild + limit + region, data = rls_summary)
+
+library(multcomp)
+
+summary(glht(fit, linfct = mcp(guild = "Dunnett"))) # Dunnet or Tukey?
+
 # Set guild color scheme
 guild_cols <- c(tropical = "#F8766D",
                 temperate = "#00BFC4")
 
-NA_plot <- ggplot(rls_means_region[region == "NA" & N > 10], aes(x = limit, y = dLat_mean, col = guild)) +
+rls_summary <- rls_summary[, N:= .N, by = .(limit, guild, region)]
+
+library(cowplot)
+
+regions <- c("NA", "WA", "SA", "SE")
+# Create a list to store the final plots for each region
+region_plots <- list()
+
+# Generate the final plot for each region
+for (i in 1:length(regions)) {
+  
+  # Create regression plot
+  p1 <- ggplot(rls_summary[N > 30 & region == regions[i]], 
+                          aes(x = dSST, y = dLat, col = guild)) +
+    geom_smooth(method = "glm") + 
+    geom_hline(yintercept = 0, lty = "dashed") +
+    scale_color_manual(values = guild_cols) +
+    facet_grid(limit ~ .) +
+    theme_bw() +
+    guides(colour = "none") +
+    theme(strip.text = element_blank())
+
+  # Create dotplot plot
+  p2 <- ggplot(rls_means_region[region == regions[i] & N > 30], 
+                       aes(x = guild, y = dLat_mean, col = guild)) +
+    geom_point(position = position_dodge(width = 0.3)) +
+    geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                      ymax = dLat_mean + dLat_se),
+                  width = 0.2, position = position_dodge(width = 0.3)) +
+    scale_color_manual(values = guild_cols) + 
+    geom_text(aes(label = paste("N =", N)),
+              size = 4, 
+              hjust = 1.3,
+              col = "black") +
+    geom_hline(yintercept = 0, lty = "dashed") +
+    facet_grid(limit ~ .) +
+    labs(y = "") +
+    guides(colour = "none") +
+    theme_bw() +
+    theme(axis.text.y = element_blank())
+
+  # Combine the two plots using cowplot
+  p3 <- plot_grid(p1, p2,
+                       labels = ifelse(regions[i] == "NA", "a",
+                                       ifelse(regions[i] == "WA", "b",
+                                              ifelse(regions[i] == "SA", "c", 
+                                                     ifelse(regions[i] == "SE", "d", "e")))),
+                       ncol = 2,
+                       align = "h",
+                       axis = "lr",
+                       rel_widths = c(2, 1))
+
+  # Store the final plot for the current region
+  region_plots[[regions[i]]] <- p3
+}
+
+# Add TAS plots
+p1 <- ggplot(rls_summary[limit == "southern" & region == "TAS"], 
+             aes(x = dSST, y = dLat, col = guild)) +
+  geom_smooth(method = "glm") + 
+  geom_hline(yintercept = 0, lty = "dashed") +
+  scale_color_manual(values = guild_cols) +
+  facet_grid(limit ~ class) +
+  theme_bw() +
+  guides(colour = "none") +
+  theme(strip.text.y = element_blank())
+
+# Create dotplot plot
+p2 <- ggplot(rls_summary[region == "TAS" & limit == "southern", 
+                         .(N = NROW(dLat),
+                           dLat_mean = mean(dLat),
+                           dLat_sd = sd(dLat),
+                           dLat_se = sd(dLat) / sqrt(NROW(dLat)),
+                           dTemp_mean = mean(dTemp),
+                           dTemp_sd = sd(dTemp),
+                           dTemp_se = sd(dTemp) / sqrt(NROW(dTemp))),
+                         by = .(limit, guild, class)], 
+             aes(x = class, y = dLat_mean, col = guild)) +
   geom_point(position = position_dodge(width = 0.3)) +
   geom_errorbar(aes(ymin = dLat_mean - dLat_se,
                     ymax = dLat_mean + dLat_se),
@@ -837,10 +888,127 @@ NA_plot <- ggplot(rls_means_region[region == "NA" & N > 10], aes(x = limit, y = 
             hjust = 1.3,
             col = "black") +
   geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(.~ class) +
-  labs(y = "dLat", subtitle = "a", fontface = "bold") +
+  facet_grid(limit ~ .) +
+  labs(y = "") +
   guides(colour = "none") +
-  theme_bw()
+  theme_bw() 
+
+# Combine the two plots using cowplot
+p3 <- plot_grid(p1, p2,
+                labels = "e",
+                ncol = 2,
+                align = "h",
+                axis = "lr",
+                rel_widths = c(2, 1))
+
+# Add to plotlist
+region_plots[["TAS"]] <- p3
+
+plot_grid(
+  plot_grid(NULL, region_plots$WA, region_plots$SA, ncol = 1),
+  plot_grid(region_plots$`NA`, NULL, aus_map, ncol = 1, rel_heights = c(1, 0, 2)),
+  plot_grid(NULL, region_plots$SE, region_plots$TAS, ncol = 1),
+  ncol = 3
+)
+
+
+
+
+
+
+
+# Create NA_regression plot
+NA_regression <- ggplot(rls_summary[N > 50 & region == "NA"], 
+                        aes(x = dSST, y = dLat, col = guild)) +
+  geom_smooth(method = "glm") + 
+  geom_hline(yintercept = 0, lty = "dashed") +
+  scale_color_manual(values = guild_cols) +
+  facet_grid(limit ~ .) +
+  theme_bw() +
+  guides(colour = "none") +
+  theme(strip.text = element_blank())
+
+# Create NA_dotplot plot
+NA_dotplot <- ggplot(rls_means_region[region == "NA" & N > 10], 
+                     aes(x = guild, y = dLat_mean, col = guild)) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                    ymax = dLat_mean + dLat_se),
+                width = 0.2, position = position_dodge(width = 0.3)) +
+  scale_color_manual(values = guild_cols) + 
+  geom_text(aes(label = paste("N =", N)),
+            size = 4, 
+            hjust = 1.3,
+            col = "black") +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(limit ~ .) +
+  labs(y = "") +
+  guides(colour = "none") +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+# Set common y-axis limits based on the maximum range of both plots
+y_limits <- range(c(layer_scales(NA_regression)$y$range$range,
+                    layer_scales(NA_dotplot)$y$range$range))
+
+# Update NA_regression plot with common y-axis limits
+NA_regression <- NA_regression +
+  ylim(y_limits)
+
+# Update NA_dotplot plot with common y-axis limits
+NA_dotplot <- NA_dotplot +
+  ylim(y_limits)
+
+# Combine the two plots using cowplot
+library(cowplot)
+
+NA_plot <- plot_grid(NA_regression, NA_dotplot,
+                     labels = c("A", "B"),
+                     ncol = 2,
+                     align = "h",
+                     axis = "lr",
+                     rel_widths = c(2, 1))
+
+# Display the final plot
+NA_plot
+
+
+# WA plot
+WA_regression <- ggplot(ext_sites[N > 50][region == "WA"], 
+                        aes(x = dSST, y = dLat, col = guild)) +
+  geom_smooth(method = "glm") + 
+  geom_hline(yintercept = 0, lty = "dashed") +
+  scale_color_manual(values = guild_cols) +
+  facet_grid(limit ~.) +
+  ylim(-1, 3) +
+  theme_bw() +
+  guides(colour = "none") +
+  theme(strip.text = element_blank())
+
+WA_dotplot <- ggplot(rls_means_region[region == "WA" & N > 10], aes(x = class, y = dLat_mean, col = guild)) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                    ymax = dLat_mean + dLat_se),
+                width = 0.2, position = position_dodge(width = 0.3)) +
+  scale_color_manual(values = guild_cols) + 
+  geom_text(aes(label = paste("N =", N)),
+            size = 4, 
+            hjust = 1.3,
+            col = "black") +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(limit ~.) +
+  labs(y = "") +
+  guides(colour = "none") +
+  theme_bw() +
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+
+WA_plot <- ggarrange(WA_regression, WA_dotplot,
+                     nrow = 1, ncol = 2,
+                     widths = c(2, 1)) #THERE IS SOMETHING WEIRD IN THIS PLOT; CHECK WITH ORIGINAL REGRESSION PLOTS
+
+
 
 WA_plot <- ggplot(rls_means_region[region == "WA" & N > 10], aes(x = limit, y = dLat_mean, col = guild)) +
   geom_point(position = position_dodge(width = 0.3)) +
@@ -1195,45 +1363,136 @@ ggarrange(dLatN_plot, dCTI_plot,
 
 ##### dSST regression plots
 ```{r}
+rls <- rls[, region:= ifelse(latitude > -23, "NA",
+                                             ifelse(latitude < -23 & longitude < 120, "WA",
+                                                    ifelse(latitude %between% c(-40, -30) & longitude %between% c(120, 147), "SA",
+                                                           ifelse(latitude %between% c(-40, -23) & longitude > 147, "SE", 
+                                                                  ifelse(latitude > -23 & longitude > 147, "NA", "TAS"))))),
+                           by = .(taxon, limit)]
+
 # Select the 10 northernmost sites for each species' limits
-ext_sites_N <- rls[, .(site_code = unique(site_code)), by = .(latitude, taxon, period)][order(taxon, period, -latitude)][, .SD[1:10], by = .(taxon, period)]
+ext_sites_N <- rls[period == "t1", .(site_code = unique(site_code)), by = .(latitude, taxon, side, period)][order(taxon, side, period, -latitude)][, .SD[1:10], by = .(taxon, side)]
 
 # Add dSST data
 ext_sites_N <- ext_sites_N[rls_sites[, .(dSST), by = .(site_code)], on = .(site_code)]
 
 # Calculate mean dSST for all extreme sites for each species
-ext_sites_N <- ext_sites_N[, .(dSST = mean(dSST)), by = .(taxon, period)]
+ext_sites_N <- ext_sites_N[, .(dSST = mean(dSST)), by = .(taxon, side)]
 
 # Add dLat values
-ext_sites_N <- ext_sites_N[rls_summary[limit == "northern", .(dLat, region, guild, class, pop_trend, presence, range, trophic_level, trophic_group, max_length, water_column, habitat, therm_max, therm_mid, sgi), by = .(taxon)], on = .(taxon)]
+ext_sites_N <- ext_sites_N[rls_summary[limit == "northern", .(dLat, region, guild, class, pop_trend, presence, range, trophic_level, trophic_group, max_length, water_column, habitat, therm_max, therm_mid, sgi), by = .(taxon, side)], on = .(taxon, side)]
 
 # Select the 10 southernmost sites for each species' limits
-ext_sites_S <- rls[, .(site_code = unique(site_code)), by = .(latitude, taxon, period)][order(taxon, period, latitude)][, .SD[1:10], by = .(taxon, period)]
+ext_sites_S <- rls[period == "t1", .(site_code = unique(site_code)), by = .(latitude, taxon, side, period)][order(taxon, side, latitude)][, .SD[1:10], by = .(taxon, side)]
 
 # Add dSST data
 ext_sites_S <- ext_sites_S[rls_sites[, .(dSST), by = .(site_code)], on = .(site_code)]
 
 # Calculate mean dSST for all extreme sites for each species
-ext_sites_S <- ext_sites_S[, .(dSST = mean(dSST)), by = .(taxon, period)]
+ext_sites_S <- ext_sites_S[, .(dSST = mean(dSST)), by = .(taxon, side)]
 
 # Add dLat values
-ext_sites_S <- ext_sites_S[rls_summary[limit == "southern", .(dLat, region, guild, class, pop_trend, presence, range, trophic_level, trophic_group, max_length, water_column, habitat, therm_max, therm_mid, sgi), by = .(taxon)], on = .(taxon)]
+ext_sites_S <- ext_sites_S[rls_summary[limit == "southern", .(dLat, region, guild, class, pop_trend, presence, range, trophic_level, trophic_group, max_length, water_column, habitat, therm_max, therm_mid, sgi), by = .(taxon, side)], on = .(taxon, side)]
 
-ext_sites_N <- ext_sites_N[, .(taxon, guild, class, pop_trend, presence, range, trophic_level, trophic_group, max_length, water_column, habitat, therm_max, therm_mid, sgi, region, dLat, dSST, limit = "northern")]
+ext_sites_N <- ext_sites_N[, .(taxon, guild, side, class, pop_trend, presence, range, trophic_level, trophic_group, max_length, water_column, habitat, therm_max, therm_mid, sgi, region, dLat, dSST, limit = "northern")]
 
-ext_sites_S <- ext_sites_S[, .(taxon, guild, class, pop_trend, presence, range, trophic_level, trophic_group, max_length, water_column, habitat, therm_max, therm_mid, sgi, region, dLat, dSST, limit = "southern")]
+ext_sites_S <- ext_sites_S[, .(taxon, guild, side, class, pop_trend, presence, range, trophic_level, trophic_group, max_length, water_column, habitat, therm_max, therm_mid, sgi, region, dLat, dSST, limit = "southern")]
 
 ext_sites <- rbind(ext_sites_N, ext_sites_S)
 
 # dLat vs dSST regression
 dLat_dSST_plot <- ggplot(ext_sites,
-                         aes(x = dSST, y = dLat)) +
-  geom_point() +
-  geom_smooth(method = 'glm', color = "black") +
+                         aes(x = dSST, y = dLat, col = guild)) +
+  geom_smooth(method = 'glm') +
   geom_hline(yintercept = 0, lty = "dashed") +
-  facet_wrap(region ~ guild + limit, scales = "free") +
+  facet_grid(limit ~ class) +
   labs(title = "") +
-  theme_bw()
+  theme_bw() +
+  guides(color = "none")
+
+# dLat vs dSST regression by region
+regions <- c("NA", "WA", "SA", "SE", "TAS")
+
+ext_sites <- ext_sites[, N:= .N, by = .(limit, guild, region)]
+
+# Create individual scatterplots
+reg_plots <- lapply(regions, function(var) {
+  ggplot(ext_sites[N > 50][region == var], 
+         aes(x = dSST, y = dLat, col = guild)) +
+    geom_smooth(method = "glm") + 
+    geom_hline(yintercept = 0, lty = "dashed") +
+    scale_color_manual(values = guild_cols) +
+    facet_grid(limit ~.) +
+    labs(subtitle = var) +
+    theme_bw() +
+    guides(colour = "none")
+})
+
+# Display the scatterplots
+reg_plots <- ggarrange(plotlist = reg_plots, ncol = 3, nrow = ceiling(length(reg_plots) / 3))
+
+# dLat vs dSST regression by trophic_group
+trophic_group <- levels(ext_sites$trophic_group)
+
+ext_sites <- ext_sites[, N:= .N, by = .(limit, guild, trophic_group, class)]
+
+# Create individual scatterplots
+troph_plots <- lapply(trophic_group, function(var) {
+  ggplot(ext_sites[N > 10][trophic_group == var], 
+         aes(x = dSST, y = dLat, col = guild)) +
+    geom_smooth(method = "glm") + 
+    geom_hline(yintercept = 0, lty = "dashed") +
+    scale_color_manual(values = guild_cols) +
+    facet_grid(limit ~ class) +
+    labs(subtitle = var) +
+    theme_bw() +
+    guides(colour = "none")
+})
+
+# Display the scatterplots
+troph_plots <- ggarrange(plotlist = troph_plots, ncol = 3, nrow = ceiling(length(troph_plots) / 3))
+
+# dLat vs dSST regression by water column
+water_column <- levels(ext_sites$water_column)
+
+ext_sites <- ext_sites[, N:= .N, by = .(limit, guild, water_column, class)]
+
+# Create individual scatterplots
+watcol_plots <- lapply(water_column, function(var) {
+  ggplot(ext_sites[N > 10][water_column == var], 
+         aes(x = dSST, y = dLat, col = guild)) +
+    geom_smooth(method = "glm") + 
+    geom_hline(yintercept = 0, lty = "dashed") +
+    scale_color_manual(values = guild_cols) +
+    facet_grid(limit ~ class) +
+    labs(subtitle = var) +
+    theme_bw() +
+    guides(colour = "none")
+})
+
+# Display the scatterplots
+watcol_plots <- ggarrange(plotlist = watcol_plots, ncol = 3, nrow = ceiling(length(watcol_plots) / 3))
+
+# dLat vs dSST regression by habitat
+habitat <- levels(ext_sites$habitat)
+
+ext_sites <- ext_sites[, N:= .N, by = .(limit, guild, habitat, class)]
+
+# Create individual scatterplots
+hab_plots <- lapply(habitat, function(var) {
+  ggplot(ext_sites[N > 10][habitat == var], 
+         aes(x = dSST, y = dLat, col = guild)) +
+    geom_smooth(method = "glm") + 
+    geom_hline(yintercept = 0, lty = "dashed") +
+    scale_color_manual(values = guild_cols) +
+    facet_grid(limit ~ class) +
+    labs(subtitle = var) +
+    theme_bw() +
+    guides(colour = "none")
+})
+
+# Display the scatterplots
+hab_plots <- ggarrange(plotlist = hab_plots, ncol = 3, nrow = ceiling(length(hab_plots) / 3))
 
 # Subsets showing expected dLat ~ dSST relationships are:
 # NA trop N
@@ -1246,6 +1505,7 @@ dLat_dSST_plot <- ggplot(ext_sites,
 
 # GAM model to test traits
 library(mgcv)
+library(lme4)
 
 # Note gam/glm might not run with NAs (pop_trend, trophic_level & SGI)
 gam(dLat ~ dSST + pop_trend + presence + range + trophic_level + trophic_group + (log(max_length) + 1) + water_column + habitat + therm_max + therm_mid + sgi,
@@ -1308,76 +1568,429 @@ rls_summary_wide <-  rls_summary[limit == "northern", .(latN = lat1), by = .(tax
 
 ##### Traits investigation
 ```{r}
-# General traits investigation
-variables <- names(rls_summary[, c(8, 21:31)])[-1]
+library(glmmTMB)
+library(summarytools) #provides more detailed summaries
+
+#### Prepare data  ----
+# Create a subset with traits of interest
+rls_traits <- rls_summary[, .(taxon, class, family,
+                              presence,
+                              guild, 
+                              limit, 
+                              dLat, 
+                              dSST, 
+                              region, 
+                              range, 
+                              max_length, 
+                              max_depth, 
+                              therm_max, 
+                              sgi, 
+                              trophic_group, 
+                              water_column)] #nrow = 1,846
+
+# Standardize quantitative varaibles
+#rls_traits$dLat_scaled <- scale(rls_traits$dLat, center = TRUE, scale = TRUE)
+#rls_traits$dSST_scaled <- scale(rls_traits$dSST, center = TRUE, scale = TRUE)
+rls_traits$range_scaled <- scale(rls_traits$range, center = TRUE, scale = TRUE)
+rls_traits$maxlength_scaled <- scale(rls_traits$max_length, center = TRUE, scale = TRUE)
+rls_traits$maxdepth_scaled <- scale(rls_traits$max_depth, center = TRUE, scale = TRUE)
+rls_traits$thermmax_scaled <- scale(rls_traits$therm_max, center = TRUE, scale = TRUE)
+rls_traits$sgi_scaled <- scale(rls_traits$sgi, center = TRUE, scale = TRUE)
+
+# Convert factors to numeric values
+rls_traits$guild_num <- as.numeric(as.factor(rls_traits$guild))
+rls_traits$presence_num <- as.numeric(as.factor(rls_traits$presence))
+rls_traits$trophic_group_num <- as.numeric(rls_traits$trophic_group)
+rls_traits$water_column_num <- as.numeric(rls_traits$water_column)
+
+# Trait data for invertebrates is incomplete, split datasets
+fish_traits <- rls_traits[class == "fish"] #nrow = 1,611
+invert_traits <- rls_traits[class == "invertebrate"] #nrow = 235
+
+# remove all NAs
+fish_traits <- na.omit(fish_traits) #nrow = 1,403
+
+# Add movement factor based on 0.5 degrees latitudinal change
+fish_traits[, move:= ifelse(abs(dLat) < 0.5, "non-mover", "mover")]
+fish_traits$move_num <- as.numeric(as.factor(fish_traits$move))
+
+# view the data using summary tools
+view(dfSummary(fish_traits))
+
+#### Plot data in pairs to see relationship between them ----
+
+# Plot all traits to visualize data
+plot(fish_traits[, .(dLat, dSST, range, max_length, max_depth, sgi, therm_max, guild, presence, trophic_group, water_column, move)]) # raw data
+
+plot(fish_traits[, .(dLat, dSST, range_scaled, maxlength_scaled, maxdepth_scaled, sgi_scaled, thermmax_scaled, guild_num, presence_num, trophic_group_num, water_column_num, move_num)]) # scaled data
+
+# create correlation matrix
+fish_cor_matrix     <- cor(fish_traits[,.(range, max_length, max_depth, sgi, therm_max, guild_num, presence_num, trophic_group_num, water_column_num, move_num)])
+
+#inverts_cor_matrix <- cor(na.omit(invert_traits[,.(range, max_length, max_depth, therm_max, guild_num, trophic_group_num, water_column_num)]))
+
+# plot matrix
+library(corrplot)
+library(RColorBrewer)
+
+dir.create(paste0(dir, '/chapter1/figures'), recursive = T)
+pdf("figures/fish_trait_cor.pdf", height = 6, width = 6)
+corrplot(fish_cor_matrix, type="upper", method = c('number'),
+         col=brewer.pal(n=11, name="PuOr"), tl.col = 'black',rect.col = 'white')
+dev.off()
+
+# Correlated variables:
+# range and therm_max
+# range and guild
+# SGI and presence
+
+# check some obvious relationships
+plot(fish_traits$trophic_group_num, fish_traits$max_length)
+plot(fish_traits$trophic_group_num, log(fish_traits$max_length))
+
+
+#### Plot data into panels for warming, cooling, southern and northern ----
+
+# Convert continuous variables into factors
+fish_traits$dSST_sign <- factor(sign(fish_traits$dSST), labels = c('cooling', 'warming'))
+fish_traits$sgi_scaled_factor <- factor(fish_traits$sgi_scaled < quantile(fish_traits$sgi_scaled, 0.5), labels = c('generalist', 'specialist'))
+fish_traits$range_scaled_factor <- factor(fish_traits$range_scaled < quantile(fish_traits$range_scaled, 0.5), labels = c('large ranged', 'small ranged'))
+fish_traits$max_length_factor <- factor(fish_traits$maxlength_scaled < quantile(fish_traits$maxlength_scaled, 0.5), labels = c('large size', 'small size'))
+fish_traits$max_depth_factor <- factor(fish_traits$maxdepth_scaled < quantile(fish_traits$maxdepth_scaled, 0.5), labels = c('deep', 'shallow'))
+fish_traits$therm_max_factor <- factor(fish_traits$thermmax_scaled < quantile(fish_traits$thermmax_scaled, 0.5), labels = c('warm threshold', 'cool threshold'))
+
+# dLat ~ dSST scatterplot
+ggplot(fish_traits, aes(x = dSST, y = dLat)) +
+  geom_point() +
+  geom_smooth(method = "glm") +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(limit ~ dSST_sign, scales = 'free_x') +
+  theme_bw()
+
+
+traits <- c("guild", "presence", "range_scaled_factor", "max_length_factor", "max_depth_factor", "therm_max_factor", "sgi_scaled_factor", "trophic_group", "water_column", "move")
 
 # Create individual scatterplots
-plots <- lapply(variables, function(var) {
-    ggplot(rls_summary, aes_string(x = var, y = "dLat")) +
-        geom_point() + facet_grid(limit ~.) +
-        ggtitle(paste("Scatterplot of dLat vs", var))
+trait_plots <- lapply(traits, function(var) {
+  ggplot(fish_traits, 
+         aes(x = dSST, y = dLat, col = get(var))) +
+    geom_point() +
+    geom_smooth(method = "glm") + 
+    geom_hline(yintercept = 0, lty = "dashed") +
+    facet_grid(limit ~ dSST_sign, scales = 'free_x') +
+    labs(subtitle = var) +
+    theme_bw()
 })
 
 # Display the scatterplots
-ggarrange(plotlist = plots, cols = 3)  # Adjust the number of columns as needed
+trait_plots <- ggarrange(plotlist = trait_plots, ncol = 3, nrow = ceiling(length(trait_plots) / 3))
 
-# Trophic level 
-ggplot(rls_summary[, .(dLat = mean(dLat)), by = .(trophic_level, limit, guild)],
-       aes(x = trophic_level, y = dLat)) +
-    geom_point() +
-    geom_smooth(method = 'glm', color = "black") +
-    geom_hline(yintercept = 0, lty = "dashed") +
-    facet_grid(limit ~ guild) +
-    labs(title = "") +
-    theme_bw()
+#### Fit models to find best random effect structure ----
 
-# range | trophic level | max_length | max depth | therm mid | therm max
-# all display normal distribution, peaks at mid range
+# NULL MODELS - HERE WE WANT TO REMOVE ALL OF THE FIXED EFFECTS AND 
+# ONLY TEST FOR DIFFERENCES AMONGST RANDOM EFFECT STRUCTURES
+M0_dLat <- glmmTMB(dLat ~ 1,
+                   data = fish_traits, REML = T)
+M1_dLat <- glmmTMB(dLat ~ 1 + (1|family),
+                   data = fish_traits, REML = T)
+anova(M0_dLat, M1_dLat) 
 
-gam(abs(dLat) ~ dSST + range + trophic_level + (log(max_length) + 1) + (log(max_depth) + 1) + therm_max + therm_mid,
-    data = rls_summary)
-# Model suggests range, therm_mid and therm_max are the strongest influencers
+# NO SUPPORT THAT FAMILY EXPLAINS SUBSTANTIAL VARIATION IN RESPONSES
 
-# What about all traits?
+#         Df    AIC    BIC  logLik deviance  Chisq Chi Df Pr(>Chisq)
+#M0_dLat  2 6483.1 6493.6 -3239.5   6479.1                         
+#M1_dLat  3 6484.7 6500.5 -3239.4   6478.7 0.3663      1      0.545
+
+
+#### Fit models with no traits
+----
+
+limits <- c("northern", "southern")
+
+simple_models <- data.table() # empty data.table
+for(j in unique(fish_traits$dSST_sign)){
+  for(i in 1:length(limits)){
+    
+    ## fit models without log transformation
+    data_limit <- fish_traits[limit == limits[i]][dSST_sign == j]
+    
+    M_limit <- lm(dLat ~ dSST, 
+                  data = data_limit)
+    
+    cooksd <- cooks.distance(M_limit)
+    data_noOutliers <- data_limit[which(cooksd < 4*cooksd),]
+    
+    M_limit <- lm(dLat ~ dSST, 
+                  data = data_noOutliers)
+    
+    LRT_limit <- drop1(M_limit, test = "Chisq")
+    
+    limit_dt <- data.table(limit = limits[i], 
+                           temp_change = j, 
+                           model = list(M_limit),
+                           AIC = LRT_limit[2, ]$AIC, 
+                           RSS = LRT_limit[2, ]$RSS, 
+                           p.val = LRT_limit[2, ]$`Pr(>Chi)`, 
+                           response = 'raw')
+    
+    simple_models <- rbind(simple_models, limit_dt)
+    
+  }
+}
+
+
+
+#### Fit models to each trait to determine the effects of each variable ----
+
+### fit without random effects
+limits <- c("northern", "southern")
+
+traits_models <- data.table() # empty data.table
+for(j in unique(fish_traits$dSST_sign)){
+for(i in 1:length(limits)){
+  for(trait in traits){
+    
+    ## fit models without log transformation
+    data_limit <- fish_traits[limit == limits[i]][dSST_sign == j]
+    
+    # data_limit <- data_limit %>% filter(dLat != 0)
+    
+    formula <- paste("dLat ~ dSST *", trait)
+    
+    M_trait <- lm(as.formula(formula), 
+                    data = data_limit)
+    
+    cooksd <- cooks.distance(M_trait)
+    data_noOutliers <- data_limit[which(cooksd < 4*cooksd),]
+    
+    M_trait <- lm(as.formula(formula), 
+                  data = data_noOutliers)
+    
+    LRT_trait <- drop1(M_trait, test = "Chisq")
+    
+    trait_dt <- data.table(limit = limits[i], 
+                           temp_change = j,
+                           trait = trait, 
+                           model = list(M_trait),
+                           AIC = LRT_trait[2, ]$AIC, 
+                           RSS = LRT_trait[2, ]$RSS, 
+                           p.val = LRT_trait[2, ]$`Pr(>Chi)`, 
+                           response = 'raw')
+    
+    traits_models <- rbind(traits_models, trait_dt)
+    
+  }
+}
+}
+
+
+# investigate holm corrections; adjusts significance level progressively based on the order of p-values as opposed to equally amongst traits
+traits_models$p.value.holm.adjust <- p.adjust(traits_models$p.val, method = 'holm')
+traits_models$Signif <- abs(traits_models$p.value.holm.adjust) < 0.05
+
+# get those that are significant from the independent models
+traits_models %>% filter(response == 'raw', p.value.holm.adjust < 0.05)
+# limit        trait    model      AIC      RSS        p.val response p.value.holm.adjust
+# 1: southern        guild <lm[13]> 1119.630 4083.872 0.0013860869      raw         0.041582608
+# 2: southern range_scaled <lm[12]> 1119.084 4079.898 0.0002964478      raw         0.009486329
+apply(traits_models %>% filter(response == 'raw', p.value.holm.adjust < 0.05), 1, function(x){
+  z <- list(summary(x$model))
+  names(z) <- paste(x$limit, x$temp_change, x$trait)
+  return(z)
+  })
+
+apply(traits_models %>% filter(response == 'raw', p.value.holm.adjust < 0.05), 1, function(x){
+  print(plot(x$model))
+})
+
+
+
+#### Test with robust regression ----
+
+library(MASS)
+
+### fit without random effects
+limits <- c("northern", "southern")
+traits <- c("guild", "presence", "range_scaled_factor", "max_length_factor", "max_depth_factor", "therm_max_factor", "sgi_scaled_factor", "water_column")
+
+
+robust_models <- data.table() # empty data.table
+for(j in unique(fish_traits$dSST_sign)){
+for(i in 1:length(limits)){
+  for(trait in traits){
+    
+    ## fit models without log transformation
+    data_limit <- fish_traits[limit == limits[i]][dSST_sign == j]
+    
+    # data_limit <- data_limit %>% filter(dLat != 0)
+    
+    formula <- paste("dLat ~ dSST *", trait)
+    
+    M_trait <- rlm(as.formula(formula), 
+                    data = data_limit)
+    
+    #cooksd <- cooks.distance(M_trait)
+    #data_noOutliers <- data_limit[which(cooksd < 4*cooksd),]
+    
+    #M_trait <- rlm(as.formula(formula), 
+    #              data = data_noOutliers)
+    
+    LRT_trait <- drop1(M_trait, test = "Chisq")
+    
+    trait_dt <- data.table(limit = limits[i], 
+                           temp_change = j,
+                           trait = trait, 
+                           model = list(M_trait),
+                           AIC = LRT_trait[2, ]$AIC, 
+                           RSS = LRT_trait[2, ]$RSS, 
+                           p.val = LRT_trait[2, ]$`Pr(>Chi)`, 
+                           response = 'raw')
+    
+    robust_models <- rbind(robust_models, trait_dt)
+    
+  }
+}
+}
+
+
+# investigate holm corrections; adjusts significance level progressively based on the order of p-values as opposed to equally amongst traits
+robust_models$p.value.holm.adjust <- p.adjust(robust_models$p.val, method = 'holm')
+robust_models$Signif <- abs(robust_models$p.value.holm.adjust) < 0.05
+
+# get those that are significant from the independent models
+robust_models %>% filter(response == 'raw', p.value.holm.adjust < 0.05)
+
+
+#### Test with GAM for heavy tailed dsitributions ----
 library(mgcv)
 
-# Fit the GAM model
-model <- gam(abs(dLat) ~ range + trophic_level + trophic_group + (log(max_length) + 1) + (log(max_depth) + 1) + water_column + habitat + therm_max + therm_mid + sgi, 
-             data = rls_summary)
-
-# Extract the coefficient values and variable names from the model
-coefficients <- coef(model)
-variable_names <- names(coefficients)
-standard_errors <- summary.gam(model)$p.table[, "Std. Error"]
-p_values <- summary.gam(model)$p.table[, "Pr(>|t|)"]
-
-# Create a data.table with the coefficient, variable name, and standard error values
-trait_dt <- data.table(trait = variable_names, coef = coefficients, std_err = standard_errors, p_val = p_values)
-
-# Order the data.table by the coefficient values in descending order
-trait_dt <- trait_dt[2:18][order(-coef)]
-
-# Set traits as factors
-trait_dt$trait <- factor(trait_dt$trait, levels = c(trait_dt$trait))
-
-# Plot
-ggplot(trait_dt, aes(x = coef, y = trait, col = ifelse(p_val < 0.01, "Significant", "Not Significant"))) +
-  geom_point() +
-  geom_errorbar(aes(xmin = coef - std_err, xmax = coef + std_err),
-                width = 0.2, position = position_dodge(width = 0.3)) +
-  scale_y_discrete(limits = rev(levels(trait_dt$trait))) + # Reverse the order of the y-axis
-  labs(x = "Coefficient", y = "Trait") +
-  scale_color_manual(values = c("Significant" = "red", "Not Significant" = "black")) +
-  geom_vline(xintercept = 0, lty = "dashed") +
-  theme_bw() +
-  theme(legend.position = "none")
+### fit without random effects
+limits <- c("northern", "southern")
+traits <- c("guild", "presence", "range_scaled_factor", "max_length_factor", "max_depth_factor", "therm_max_factor", "sgi_scaled_factor", "trophic_group", "water_column")
 
 
+gam_models <- data.table() # empty data.table
+for(j in unique(fish_traits$dSST_sign)){
+for(i in 1:length(limits)){
+  for(trait in traits){
+    
+    ## fit models without log transformation
+    data_limit <- fish_traits[limit == limits[i]][dSST_sign == j]
+    
+    # data_limit <- data_limit %>% filter(dLat != 0)
+    
+    formula <- paste("dLat ~ dSST *", trait)
+    
+    M_trait <- gam(as.formula(formula),
+                   family = gaussian(link = "identity"),
+                    data = data_limit)
+    
+    #cooksd <- cooks.distance(M_trait)
+    #data_noOutliers <- data_limit[which(cooksd < 4*cooksd),]
+    
+    #M_trait <- rlm(as.formula(formula), 
+    #              data = data_noOutliers)
+    
+    LRT_trait <- drop1(M_trait, test = "Chisq")
+    
+    trait_dt <- data.table(limit = limits[i], 
+                           temp_change = j,
+                           trait = trait, 
+                           model = list(M_trait),
+                           AIC = LRT_trait[2, ]$AIC, 
+                           RSS = LRT_trait[2, ]$RSS, 
+                           p.val = LRT_trait[2, ]$`Pr(>Chi)`, 
+                           response = 'raw')
+    
+    gam_models <- rbind(gam_models, trait_dt)
+    
+  }
+}
+}
 
-ggplot(data.table(names(coef(model)), coef(model), ), aes( x = V2, y = factor(V1))) + geom_point() +
-   geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                    ymax = dLat_mean + dLat_se),
-                width = 0.2, position = position_dodge(width = 0.3)) +
+
+# investigate holm corrections; adjusts significance level progressively based on the order of p-values as opposed to equally amongst traits
+robust_models$p.value.holm.adjust <- p.adjust(robust_models$p.val, method = 'holm')
+robust_models$Signif <- abs(robust_models$p.value.holm.adjust) < 0.05
+
+# get those that are significant from the independent models
+robust_models %>% filter(response == 'raw', p.value.holm.adjust < 0.05)
+
+
+
+
+
+##### FITTING TRAITS MODEL INDEPENDENTLY ----
+### Testing structure of the random effects in our model ----
+
+# no effect from phylogeny
+M0_dLat <- glm(dLat ~ dSST,
+                   data = rls_traits)
+
+# Summary of M0: dSST has a negative effect on dLat p < 0.01
+#Coefficients:
+#            Estimate Std. Error t value Pr(>|t|)   
+#(Intercept) -0.02878    0.05942  -0.484   0.6282   
+#dSST        -0.16298    0.06079  -2.681   0.0074 **
+
+
+# Control for the shared effect of species evolutionary histories
+M1_dLat <- lmer(dLat ~ dSST + (1|family),
+                   data = rls_traits, REML = T)
+
+anova(M0_dLat, M1_dLat) 
+# Lower residual deviance indicates a slightly better fit with random effects term
+#     Df Deviance Resid. Df Resid. Dev
+#NULL                  1845      11834
+#dSST  1   45.955      1844      11788
+  
+# Control for the effects of dSST per family 
+M2_dLat <- lmer(dLat ~ dSST + (dSST|family),
+                   data = rls_traits, REML = F) #model does not converge if REML = T
+
+anova(M1_dLat, M2_dLat) 
+# No evidence for differences between models, but M1 is less complex
+#        npar    AIC    BIC  logLik deviance  Chisq
+#M1_dLat    4 8669.3 8691.4 -4330.6   8661.3       
+#M2_dLat    6 8671.9 8705.0 -4329.9   8659.9 1.3737
+#        Df Pr(>Chisq)
+#M1_dLat              
+#M2_dLat  2     0.5032
+  
+AIC(M1_site) # different to ANOVA above, suggesting a higher AIC value
+AIC(M2_site)
+
+### Test each trait metric
+limits <- c("northern", "southern")
+
+traits <- c("guild", "range_scaled", "maxlength_scaled", "maxdepth_scaled", "thermmax_scaled", "sgi_scaled", "trophic_group", "water_column")
+
+traits_models <- data.table() # empty data.table
+for(i in 1:length(limits)){
+  for(trait in traits){
+    
+    formula <- paste("dLat ~ dSST *", trait, "+ (1|family)")
+    
+    M_trait <- lmer(as.formula(formula), 
+                    data = rls_traits[limit == limits[i]],
+                    REML = TRUE)
+    
+    LRT_trait <- drop1(M_trait, test = "Chisq")
+    
+    trait_dt <- data.table(limit = limits[i], trait = trait, model = c(M_trait), AIC = LRT_trait[2, ]$AIC, LRT = LRT_trait[2, ]$LRT, p.val = LRT_trait[2, ]$`Pr(Chi)`)
+    
+    traits_models <- rbind(traits_models, trait_dt)
+  }
+}  
+
+
+### Bonferroni corrections on the p-values from seperate models ----
+
+traits_models <- traits_models[, p.adj:= p.adjust(p.val, method = 'bonferroni'), # is the method bonferroni or Benjamini & Hochberg?
+                               by = .(limit)]
+
+traits_models[p.adj < 0.05]
+# None
 ```
 
 
@@ -1585,6 +2198,50 @@ rls_means_plot_wt <- ggplot(rls_means_wt,
 
 ```
 
+
+##### Species wallpaper
+```{r}
+library(sf) # processing spatial vector data
+library(raster) # manipulating rasters
+library(terra) # spatial data analysis
+library(gstat) # producing inverse distance weighted means
+
+# Species wallpapers
+taxon_list <- rls_summary[limit != "optimum"][order(-abs(dLat))][, .SD[1:50]]$taxon
+
+# Create simple features objects and a spatial grid for interpolation
+aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
+crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
+aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
+
+ggplot() +
+  # Rasters
+  geom_sf(data = aus_sf) +
+  
+  # sites included in analysis
+  geom_point(data = rls[limit != "optimum"][taxon %in% taxon_list], 
+             aes(x = longitude, y = latitude, shape = side),
+             size = 3) +
+  
+  # Select shapes to display
+  scale_shape_manual(values = c("east" = 1, "west" = 2)) +
+  
+  # Limit lines
+  geom_hline(data = rls[limit != "optimum"][taxon %in% taxon_list],
+             aes(yintercept = lat, col = limit, lty = side)) +
+  
+  # East/west division
+  geom_vline(xintercept = 142.5, lty = "dashed") +
+  annotate("text", x = 150, y = -7, label = "east") +
+  annotate("text", x = 132, y = -7, label = "west") +
+  
+  # Facet by taxon
+  facet_wrap(vars(taxon, period)) +
+  
+  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 160), label = paste0(seq(110, 160, by = 10), "°E")) +
+  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
+  theme_bw()
+```
 
 ```{r}
 # Exploratory correlations
