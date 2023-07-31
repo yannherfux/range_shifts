@@ -611,14 +611,14 @@ rls_summary <- rls_summary[, ':=' (guild = factor(guild, levels = c("tropical", 
 ```{r}
 ## Main data distribution
 
-# Boxplot
-rls_summary_bp <- ggplot(rls_summary, aes(x = guild, y = dLat, col = guild)) +
+# Violin plot
+rls_summary_vp <- ggplot(rls_summary, aes(x = guild, y = dLat, fill = guild)) +
   geom_violin() +
   geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(limit ~.) +
+  facet_grid(limit ~., scales = 'free') +
   labs(y = "Changes in latitudinal limits (° latitude)", subtitle = "a", x = "") +
   theme_bw() +
-  guides(colour = "none")
+  guides(fill = "none")
 
 
 # Averages
@@ -646,17 +646,47 @@ rls_means_plot_wt <- ggplot(rls_means_wt,
 
 # Regression
 rls_summary_regression <- ggplot(rls_summary, aes(x = dSST, y = dLat, col = guild)) +
+  geom_point(col = "grey", alpha = 0.5) +
   geom_smooth(method = "glm") +
   geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(limit ~ guild) +
+  facet_grid(limit ~ guild, scales = 'free') +
   labs(x = "Changes in sea-surface temperature (°C)", y = "Changes in latitudinal limits (° latitude)", subtitle = "c") +
   theme_bw() +
   theme(strip.text.x = element_blank()) +
   guides(colour = "none")
 
+limits <- c("northern", "southern")
+
+reg_models <- data.table() # empty data.table
+for(j in unique(rls_summary$guild)){
+  for(i in 1:length(limits)){
+    
+    ## fit models without log transformation
+    data_limit <- rls_summary[limit == limits[i]][guild == j]
+    
+    M_limit <- lm(dLat ~ dSST, 
+                  data = data_limit)
+    
+    LRT_limit <- drop1(M_limit, test = "Chisq")
+    
+    limit_dt <- data.table(limit = limits[i], 
+                           guild = j, 
+                           model = list(M_limit),
+                           AIC = LRT_limit[2, ]$AIC, 
+                           RSS = LRT_limit[2, ]$RSS, 
+                           p.val = LRT_limit[2, ]$`Pr(>Chi)`, 
+                           response = 'raw')
+    
+    reg_models <- rbind(reg_models, limit_dt)
+    
+  }
+}
+
+# Both tropical trends are significant -> evidence that northern limit is highly significant
+
 library(ggpubr)
 
-ggarrange(rls_summary_bp, rls_means_plot_wt, rls_summary_regression,
+ggarrange(rls_summary_vp, rls_means_plot_wt, rls_summary_regression,
           nrow = 3, ncol = 1)
 ```
 
@@ -686,7 +716,7 @@ site_sst <- site_sst[, ':=' (sst_t1 = sst_lm[[1]]$coefficients["(Intercept)"] + 
                                dSST = sst_lm[[1]]$coefficients["year"]),
                        by = .(site_code)]
 
-rls_sites <- rls_sites[, dSST:= sst_t2 - sst_t1, by = .(site_code)]
+#rls_sites <- rls_sites[, dSST:= sst_t2 - sst_t1, by = .(site_code)]
 
 
 # Create simple features objects and a spatial grid for interpolation
@@ -767,14 +797,11 @@ aus_map <- ggplot() +
   theme(legend.position = "bottom", legend.direction = "horizontal")  
 
 # Regional means
-rls_means_region <- rls_summary[region != "TAS", 
+rls_means_region <- rls_summary[, 
                                 .(N = NROW(dLat),
                                   dLat_mean = mean(dLat),
                                   dLat_sd = sd(dLat),
-                                  dLat_se = sd(dLat) / sqrt(NROW(dLat)),
-                                  dTemp_mean = mean(dTemp),
-                                  dTemp_sd = sd(dTemp),
-                                  dTemp_se = sd(dTemp) / sqrt(NROW(dTemp))),
+                                  dLat_se = sd(dLat) / sqrt(NROW(dLat))),
                                 by = .(limit, guild, region)]
 
 rls_means_region_plot <- ggplot(rls_means_region,
@@ -789,12 +816,12 @@ rls_means_region_plot <- ggplot(rls_means_region,
   theme_bw() +
   guides(colour = "none")
 
-# Test means are different to 0 with ANOVA
-fit <- aov(dLat ~ 1 + guild + limit + region, data = rls_summary)
+# Check if means are different to 0 using t-tests
+rls_ttest <- rls_summary[rls_means_region[, .(N), by = .(region, limit, guild)], on = .(region, limit, guild)][N > 10][, .(p.val = t.test(dLat, mu = 0)$p.val), by = .(region, limit, guild)]
 
-library(multcomp)
-
-summary(glht(fit, linfct = mcp(guild = "Dunnett"))) # Dunnet or Tukey?
+# investigate holm corrections; adjusts significance equally amongst groups
+rls_ttest$p.value.bonf.adjust <- p.adjust(rls_ttest$p.val, method = 'bonferroni')
+rls_ttest$Signif <- abs(rls_ttest$p.value.bonf.adjust) < 0.05
 
 # Set guild color scheme
 guild_cols <- c(tropical = "#F8766D",
@@ -804,7 +831,7 @@ rls_summary <- rls_summary[, N:= .N, by = .(limit, guild, region)]
 
 library(cowplot)
 
-regions <- c("NA", "WA", "SA", "SE")
+regions <- c("NA", "WA", "SA", "SE", "TAS")
 # Create a list to store the final plots for each region
 region_plots <- list()
 
@@ -812,17 +839,17 @@ region_plots <- list()
 for (i in 1:length(regions)) {
   
   # Create regression plot
-  p1 <- ggplot(rls_summary[N > 30 & region == regions[i]], 
-                          aes(x = dSST, y = dLat, col = guild)) +
-    geom_smooth(method = "glm") + 
-    geom_hline(yintercept = 0, lty = "dashed") +
-    scale_color_manual(values = guild_cols) +
-    facet_grid(limit ~ .) +
-    theme_bw() +
-    guides(colour = "none") +
-    theme(strip.text = element_blank())
+#  p1 <- ggplot(rls_summary[N > 30 & region == regions[i]], 
+#                          aes(x = dSST, y = dLat, col = guild)) +
+#    geom_smooth(method = "glm") + 
+#    geom_hline(yintercept = 0, lty = "dashed") +
+#    scale_color_manual(values = guild_cols) +
+#    facet_grid(limit ~ .) +
+#    theme_bw() +
+#    guides(colour = "none") +
+#    theme(strip.text = element_blank())
 
-  # Create dotplot plot
+  # Create dotplot plot; use means with more than 30 data points
   p2 <- ggplot(rls_means_region[region == regions[i] & N > 30], 
                        aes(x = guild, y = dLat_mean, col = guild)) +
     geom_point(position = position_dodge(width = 0.3)) +
@@ -1082,6 +1109,89 @@ plot_grid(
   plot_grid(NULL, SE_plot, TAS_plot, ncol = 1),
   ncol = 3
 )
+
+```
+
+##### Top 25% most abundant species
+```{r}
+# 697 species; 25% is roughly 174
+abun_taxon <- rls[, .(taxon = unique(taxon)), by = .(N_site)][order(-N_site)][1:174]
+
+rls_summary_abun <- rls_summary[taxon %in% abun_taxon$taxon] # nrow = 506
+
+ggplot(rls_summary_abun, aes(x = dSST, y = dLat)) +
+  geom_point(col = "grey", alpha = 0.5) +
+  geom_smooth(aes(col = guild), method = 'glm') +
+  facet_grid(limit ~ guild, scales = 'free') +
+  theme_bw()
+
+limits <- c("northern", "southern")
+
+abun_models <- data.table() # empty data.table
+for(j in unique(rls_summary_abun$guild)){
+  for(i in 1:length(limits)){
+    
+    ## fit models without log transformation
+    data_limit <- rls_summary_abun[limit == limits[i]][guild == j]
+    
+    M_limit <- lm(dLat ~ dSST, 
+                  data = data_limit)
+    
+    LRT_limit <- drop1(M_limit, test = "Chisq")
+    
+    limit_dt <- data.table(limit = limits[i], 
+                           guild = j, 
+                           model = list(M_limit),
+                           AIC = LRT_limit[2, ]$AIC, 
+                           RSS = LRT_limit[2, ]$RSS, 
+                           p.val = LRT_limit[2, ]$`Pr(>Chi)`, 
+                           response = 'raw')
+    
+    abun_models <- rbind(abun_models, limit_dt)
+    
+  }
+}
+
+# No trends are significant
+
+# By region
+rls_summary_abun <- rls_summary_abun[, !("N")]
+rls_summary_abun <- rls_summary_abun[rls_summary_abun[, .N, by = .(guild, limit, region)], on = .(guild, limit, region)]
+
+ggplot(rls_summary_abun[N > 10], aes(x = dSST, y = dLat)) +
+  geom_point(col = "grey", alpha = 0.5) +
+  geom_smooth(aes(col = guild), method = 'glm') +
+  facet_grid(limit ~ region + guild, scales = 'free') +
+  theme_bw()
+
+# Think about seperating fish and invertebrates
+
+
+means_region_top25 <- rls_summary_abun[, 
+                                       .(N = NROW(dLat),
+                                         dLat_mean = mean(dLat),
+                                         dLat_sd = sd(dLat),
+                                         dLat_se = sd(dLat) / sqrt(NROW(dLat))),
+                                       by = .(limit, guild, region)]
+
+means_region_top25_plot <- ggplot(means_region_top25,
+                                aes(x = class, y = dLat_mean, col = guild)) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                    ymax = dLat_mean + dLat_se),
+                width = 0.2, position = position_dodge(width = 0.3)) +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(limit ~ region) +
+  labs(y = "Mean changes in latitudinal limits (° latitude)") +
+  theme_bw() +
+  guides(colour = "none")
+
+# Check if means are different to 0 using t-tests
+means_region_ttest <- rls_summary_abun[means_region_top25[, .(N), by = .(region, limit, guild)], on = .(region, limit, guild)][, .(p.val = t.test(dLat, mu = 0)$p.val), by = .(region, limit, guild)]
+
+# investigate holm corrections; adjusts significance equally amongst groups
+means_region_ttest$p.value.holm.adjust <- p.adjust(means_region_ttest$p.val, method = 'holm')
+means_region_ttest$Signif <- abs(means_region_ttest$p.value.holm.adjust) < 0.05
 
 ```
 
@@ -1566,8 +1676,313 @@ ggarrange(
 rls_summary_wide <-  rls_summary[limit == "northern", .(latN = lat1), by = .(taxon)][rls_summary[limit == "southern", .(latS = lat1), by = .(taxon)], on = .(taxon)]
 ```
 
+##### Functional groups
+```{r}
+# Functional groups
+functional_groups <- data.table(
+  size = rep(c("small", "medium", "large", "giant"), each = 5 * 4),
+  water_column = rep(rep(levels(rls_summary[, unique(water_column)])), each = 5),
+  trophic_group = rep(levels(rls_summary[, unique(trophic_group)])),
+  fcn_grp = c("small benthic invertivore",
+              "small benthic corallivore",
+              "small benthic herbivore",
+              "small benthic carnivore",
+              "small benthic planktivore",
+              "small demersal invertivore",
+              "small demersal corallivore",
+              "small demersal herbivore",
+              "small demersal carnivore",
+              "small demersal planktivore",
+              "small pelagic non-site attached invertivore",
+              "small pelagic non-site attached corallivore",
+              "small pelagic non-site attached herbivore",
+              "small pelagic non-site attached carnivore",
+              "small pelagic non-site attached planktivore",
+              "small pelagic site attached invertivore",
+              "small pelagic site attached corallivore",
+              "small pelagic site attached herbivore",
+              "small pelagic site attached carnivore",
+              "small pelagic site attached planktivore",
+              "medium benthic invertivore",
+              "medium benthic corallivore",
+              "medium benthic herbivore",
+              "medium benthic carnivore",
+              "medium benthic planktivore",
+              "medium demersal invertivore",
+              "medium demersal corallivore",
+              "medium demersal herbivore",
+              "medium demersal carnivore",
+              "medium demersal planktivore",
+              "medium pelagic non-site attached invertivore",
+              "medium pelagic non-site attached corallivore",
+              "medium pelagic non-site attached herbivore",
+              "medium pelagic non-site attached carnivore",
+              "medium pelagic non-site attached planktivore",
+              "medium pelagic site attached invertivore",
+              "medium pelagic site attached corallivore",
+              "medium pelagic site attached herbivore",
+              "medium pelagic site attached carnivore",
+              "medium pelagic site attached planktivore",
+              "large benthic invertivore",
+              "large benthic corallivore",
+              "large benthic herbivore",
+              "large benthic carnivore",
+              "large benthic planktivore",
+              "large demersal invertivore",
+              "large demersal corallivore",
+              "large demersal herbivore",
+              "large demersal carnivore",
+              "large demersal planktivore",
+              "large pelagic non-site attached invertivore",
+              "large pelagic non-site attached corallivore",
+              "large pelagic non-site attached herbivore",
+              "large pelagic non-site attached carnivore",
+              "large pelagic non-site attached planktivore",
+              "large pelagic site attached invertivore",
+              "large pelagic site attached corallivore",
+              "large pelagic site attached herbivore",
+              "large pelagic site attached carnivore",
+              "large pelagic site attached planktivore",
+              "giant benthic invertivore",
+              "giant benthic corallivore",
+              "giant benthic herbivore",
+              "giant benthic carnivore",
+              "giant benthic planktivore",
+              "giant demersal invertivore",
+              "giant demersal corallivore",
+              "giant demersal herbivore",
+              "giant demersal carnivore",
+              "giant demersal planktivore",
+              "giant pelagic non-site attached invertivore",
+              "giant pelagic non-site attached corallivore",
+              "giant pelagic non-site attached herbivore",
+              "giant pelagic non-site attached carnivore",
+              "giant pelagic non-site attached planktivore",
+              "giant pelagic site attached invertivore",
+              "giant pelagic site attached corallivore",
+              "giant pelagic site attached herbivore",
+              "giant pelagic site attached carnivore",
+              "giant pelagic site attached planktivore")
+)
+
+# Add size catefory to summary subset
+rls_summary[, size:= ifelse(max_length < 15, "small",
+                            ifelse(max_length %between% c(16, 30), "medium",
+                                   ifelse(max_length %between% c(31, 45), "large", "giant")))]
+
+# Join functional groups
+rls_summary <- rls_summary[functional_groups, on= .(size, water_column, trophic_group), nomatch = NULL]
+
+# Classify species as expected vs non expected based on a 0.5 degree cutoff
+rls_summary <- rls_summary[, trend:= factor(ifelse(dSST < -0.5 & dLat > 0 | dSST > 0.5 & dLat < 0, "expected",
+                                            ifelse(dSST < -0.5 & dLat < 0 | dSST > 0.5 & dLat > 0, "contrary", "static")))]
+
+# Select the 10 most common functional groups
+ggplot(rls_summary[fcn_grp %in% rls_summary[, .N, by = .(fcn_grp)][order(-N)][1:10]$fcn_grp],
+       aes(x = dSST, y = dLat)) +
+  geom_point(col = "grey", alpha = 0.5) +
+  geom_smooth(aes(col = guild), method = 'glm') +
+  facet_grid(limit ~ guild) +
+  theme_bw()
+
+ggplot(rls_summary[fcn_grp %in% rls_summary[, .N, by = .(fcn_grp)][order(-N)][1:10]$fcn_grp],
+       aes(x = fcn_grp, y = dLat)) +
+  geom_boxplot() +
+  facet_grid(limit ~ guild) +
+  theme_bw()
+
+fcn_grp_means <- rls_summary[fcn_grp %in% rls_summary[, .N, by = .(fcn_grp)][order(-N)][1:10]$fcn_grp, 
+                            .(N = NROW(dLat),
+                              dLat_mean = mean(dLat),
+                              dLat_sd = sd(dLat),
+                              dLat_se = sd(dLat) / sqrt(NROW(dLat))),
+                            by = .(limit, fcn_grp)]
+# Dotplot
+fcngrp_means_plot <- ggplot(fcn_grp_means,
+                            aes(x = fcn_grp, y = dLat_mean)) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                    ymax = dLat_mean + dLat_se),
+                width = 0.2, position = position_dodge(width = 0.3)) +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(limit ~.) +
+  labs(x = "", y = "Mean changes in latitudinal limits (° latitude)", subtitle = "b") +
+  theme_bw() +
+  guides(colour = "none")
+
+# Giant demersal herbivore and large demersal herbivore stand out, but not sure what that means -> also majority of data is herbivore and invertivore
+
+##### --------
+# Functional groups
+functional_groups <- data.table(
+  size = rep(c("small", "large"), each = 5 * 4),
+  water_column = rep(rep(levels(factor(rls_summary[, unique(water_column)]))), each = 5),
+  trophic_group = rep(levels(factor(rls_summary[, unique(trophic_group)]))),
+  fcn_grp = c("small benthic invertivore",
+              "small benthic corallivore",
+              "small benthic herbivore",
+              "small benthic carnivore",
+              "small benthic planktivore",
+              "small demersal invertivore",
+              "small demersal corallivore",
+              "small demersal herbivore",
+              "small demersal carnivore",
+              "small demersal planktivore",
+              "small pelagic non-site attached invertivore",
+              "small pelagic non-site attached corallivore",
+              "small pelagic non-site attached herbivore",
+              "small pelagic non-site attached carnivore",
+              "small pelagic non-site attached planktivore",
+              "small pelagic site attached invertivore",
+              "small pelagic site attached corallivore",
+              "small pelagic site attached herbivore",
+              "small pelagic site attached carnivore",
+              "small pelagic site attached planktivore",
+              "large benthic invertivore",
+              "large benthic corallivore",
+              "large benthic herbivore",
+              "large benthic carnivore",
+              "large benthic planktivore",
+              "large demersal invertivore",
+              "large demersal corallivore",
+              "large demersal herbivore",
+              "large demersal carnivore",
+              "large demersal planktivore",
+              "large pelagic non-site attached invertivore",
+              "large pelagic non-site attached corallivore",
+              "large pelagic non-site attached herbivore",
+              "large pelagic non-site attached carnivore",
+              "large pelagic non-site attached planktivore",
+              "large pelagic site attached invertivore",
+              "large pelagic site attached corallivore",
+              "large pelagic site attached herbivore",
+              "large pelagic site attached carnivore",
+              "large pelagic site attached planktivore")
+)
+
+# Add size catefory to summary subset
+rls_summary[, size:= ifelse(max_length < 30, "small", "large")]
+
+# Join functional groups
+rls_summary <- rls_summary[functional_groups, on= .(size, water_column, trophic_group), nomatch = NULL]
+
+# Classify species as expected vs non expected based on a 0.5 degree cutoff
+rls_summary <- rls_summary[, trend:= factor(ifelse(dSST < -0.5 & dLat > 0 | dSST > 0.5 & dLat < 0, "expected",
+                                            ifelse(dSST < -0.5 & dLat < 0 | dSST > 0.5 & dLat > 0, "contrary", "static")))]
+
+# Reorder by descending order of functional group and trend
+rls_summary$trend <- factor(rls_summary$trend, levels = c("expected", "contrary", "static"))
+rls_summary$fcn_grp <- factor(rls_summary$fcn_grp, levels = rls_summary[trend == "expected", .N, by = fcn_grp][order(-N)]$fcn_grp)
+
+# Plot barplot
+ggplot(rls_summary[fcn_grp %in% rls_summary[, .N, by = .(fcn_grp)][order(-N)][1:10]$fcn_grp],
+       aes(x = fcn_grp)) +
+    geom_bar() +
+    facet_grid(trend ~.) +
+    theme_bw()
+
+
+# Select the 10 most common functional groups
+ggplot(rls_summary[fcn_grp %in% rls_summary[, .N, by = .(fcn_grp)][order(-N)][1:10]$fcn_grp],
+       aes(x = dSST, y = dLat)) +
+  geom_point(col = "grey", alpha = 0.5) +
+  geom_smooth(aes(col = guild), method = 'glm') +
+  facet_grid(limit ~ guild) +
+  theme_bw()
+
+ggplot(rls_summary[fcn_grp %in% rls_summary[, .N, by = .(fcn_grp)][order(-N)][1:10]$fcn_grp],
+       aes(x = fcn_grp, y = dLat)) +
+  geom_boxplot() +
+  facet_grid(limit ~ guild) +
+  theme_bw()
+
+fcn_grp_means <- rls_summary[fcn_grp %in% rls_summary[, .N, by = .(fcn_grp)][order(-N)][1:10]$fcn_grp, 
+                            .(N = NROW(dLat),
+                              dLat_mean = mean(dLat),
+                              dLat_sd = sd(dLat),
+                              dLat_se = sd(dLat) / sqrt(NROW(dLat))),
+                            by = .(limit, fcn_grp)]
+# Dotplot
+fcngrp_means_plot <- ggplot(fcn_grp_means,
+                            aes(x = fcn_grp, y = dLat_mean)) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                    ymax = dLat_mean + dLat_se),
+                width = 0.2, position = position_dodge(width = 0.3)) +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(limit ~.) +
+  labs(x = "", y = "Mean changes in latitudinal limits (° latitude)", subtitle = "b") +
+  theme_bw() +
+  guides(colour = "none")
+
+#### ----  Try using top 25% species
+
+# Add size catefory to summary subset
+rls_summary_abun[, size:= ifelse(max_length < 30, "small", "large")]
+
+# Join functional groups
+rls_summary_abun <- rls_summary_abun[functional_groups, on= .(size, water_column, trophic_group), nomatch = NULL]
+
+# Classify species as expected vs non expected based on a 0.5 degree cutoff
+rls_summary_abun <- rls_summary_abun[, trend:= factor(ifelse(dSST < -0.5 & dLat > 0 | dSST > 0.5 & dLat < 0, "expected",
+                                            ifelse(dSST < -0.5 & dLat < 0 | dSST > 0.5 & dLat > 0, "contrary", "static")))]
+
+# Reorder by descending order of functional group and trend
+rls_summary_abun$trend <- factor(rls_summary_abun$trend, levels = c("expected", "contrary", "static"))
+rls_summary_abun$fcn_grp <- factor(rls_summary_abun$fcn_grp, levels = rls_summary_abun[trend == "expected", .N, by = fcn_grp][order(-N)]$fcn_grp)
+
+
+ggplot(rls_summary_abun[fcn_grp %in% rls_summary_abun[, .N, by = .(fcn_grp)][order(-N)][1:10]$fcn_grp],
+       aes(x = fcn_grp)) +
+    geom_bar() +
+    facet_grid(trend ~.) +
+    theme_bw()
+```
+
 ##### Traits investigation
 ```{r}
+# Classify species as expected vs non expected based on a 0.5 degree cutoff
+rls_traits <- rls_summary[, trend:= factor(ifelse(dSST < -0.5 & dLat > 0.5 | dSST > 0.5 & dLat < -0.5, "expected",
+                                            ifelse(dSST < -0.5 & dLat < -0.5 | dSST > 0.5 & dLat > 0.5, "not expected", "static")))]
+
+# Scale the data and Check for normality
+rls_traits$range_scaled <- scale(rls_traits$range) 
+rls_traits$max_length_scaled <- scale(rls_traits$max_length) 
+rls_traits$therm_max_scaled <- scale(rls_traits$therm_max)
+rls_traits$sgi_scaled <- scale(rls_traits$sgi)
+
+hist(rls_traits$range_scaled) # skewed to the left
+hist(rls_traits$max_length) # skewed to the left
+hist(rls_traits$therm_max_scaled) # bimodal
+hist(rls_traits$sgi_scaled)
+
+# Do I need to transform the data?
+
+# Tukeys test
+library(multcomp)
+
+fit <- aov(range_scaled ~ 1 + trend, data = rls_traits)
+
+summary(glht(fit, linfct = mcp(trend = "Tukey")))
+
+# Therm_max; stat vs not expected
+# SGI; stat vs expected
+
+ggplot(rls_traits, aes(x = trend, y = range_scaled)) +
+  geom_boxplot()
+
+# Average trait values by trend
+rls_summary <- rls_summary[, lapply(.SD, function(x){mean(scale(x, center = T, scale = T), 
+                                                          na.rm = T)}), 
+                 by = .(trend),
+                 .SDcols = c("range", "max_length", "therm_max", "sgi")]
+
+#          trend    range max_length therm_max      sgi
+#1:       static 2387.757   33.31801  29.24990 14.54516
+#2:     expected 2170.720   34.31411  28.73240 11.91585
+#3: not expected 2190.659   36.75037  27.92359 13.50954
+
+
 library(glmmTMB)
 library(summarytools) #provides more detailed summaries
 
@@ -1589,8 +2004,8 @@ rls_traits <- rls_summary[, .(taxon, class, family,
                               water_column)] #nrow = 1,846
 
 # Standardize quantitative varaibles
-#rls_traits$dLat_scaled <- scale(rls_traits$dLat, center = TRUE, scale = TRUE)
-#rls_traits$dSST_scaled <- scale(rls_traits$dSST, center = TRUE, scale = TRUE)
+rls_traits$dLat_scaled <- scale(rls_traits$dLat, center = TRUE, scale = TRUE)
+rls_traits$dSST_scaled <- scale(rls_traits$dSST, center = TRUE, scale = TRUE)
 rls_traits$range_scaled <- scale(rls_traits$range, center = TRUE, scale = TRUE)
 rls_traits$maxlength_scaled <- scale(rls_traits$max_length, center = TRUE, scale = TRUE)
 rls_traits$maxdepth_scaled <- scale(rls_traits$max_depth, center = TRUE, scale = TRUE)
@@ -1610,22 +2025,18 @@ invert_traits <- rls_traits[class == "invertebrate"] #nrow = 235
 # remove all NAs
 fish_traits <- na.omit(fish_traits) #nrow = 1,403
 
-# Add movement factor based on 0.5 degrees latitudinal change
-fish_traits[, move:= ifelse(abs(dLat) < 0.5, "non-mover", "mover")]
-fish_traits$move_num <- as.numeric(as.factor(fish_traits$move))
-
 # view the data using summary tools
 view(dfSummary(fish_traits))
 
 #### Plot data in pairs to see relationship between them ----
 
 # Plot all traits to visualize data
-plot(fish_traits[, .(dLat, dSST, range, max_length, max_depth, sgi, therm_max, guild, presence, trophic_group, water_column, move)]) # raw data
+plot(fish_traits[, .(dLat, dSST, range, max_length, max_depth, sgi, therm_max, guild, presence, trophic_group, water_column)]) # raw data
 
 plot(fish_traits[, .(dLat, dSST, range_scaled, maxlength_scaled, maxdepth_scaled, sgi_scaled, thermmax_scaled, guild_num, presence_num, trophic_group_num, water_column_num, move_num)]) # scaled data
 
 # create correlation matrix
-fish_cor_matrix     <- cor(fish_traits[,.(range, max_length, max_depth, sgi, therm_max, guild_num, presence_num, trophic_group_num, water_column_num, move_num)])
+fish_cor_matrix     <- cor(fish_traits[,.(range, max_length, max_depth, sgi, therm_max, guild_num, presence_num, trophic_group_num, water_column_num)])
 
 #inverts_cor_matrix <- cor(na.omit(invert_traits[,.(range, max_length, max_depth, therm_max, guild_num, trophic_group_num, water_column_num)]))
 
@@ -1668,7 +2079,7 @@ ggplot(fish_traits, aes(x = dSST, y = dLat)) +
   theme_bw()
 
 
-traits <- c("guild", "presence", "range_scaled_factor", "max_length_factor", "max_depth_factor", "therm_max_factor", "sgi_scaled_factor", "trophic_group", "water_column", "move")
+traits <- c("guild", "presence", "range_scaled_factor", "max_length_factor", "max_depth_factor", "therm_max_factor", "sgi_scaled_factor", "trophic_group", "water_column")
 
 # Create individual scatterplots
 trait_plots <- lapply(traits, function(var) {
@@ -1677,7 +2088,7 @@ trait_plots <- lapply(traits, function(var) {
     geom_point() +
     geom_smooth(method = "glm") + 
     geom_hline(yintercept = 0, lty = "dashed") +
-    facet_grid(limit ~ dSST_sign, scales = 'free_x') +
+    facet_grid(limit ~., scales = 'free_x') +
     labs(subtitle = var) +
     theme_bw()
 })
@@ -1827,7 +2238,8 @@ for(i in 1:length(limits)){
     formula <- paste("dLat ~ dSST *", trait)
     
     M_trait <- rlm(as.formula(formula), 
-                    data = data_limit)
+                    method = "MM",
+                   data = data_limit)
     
     #cooksd <- cooks.distance(M_trait)
     #data_noOutliers <- data_limit[which(cooksd < 4*cooksd),]
@@ -1879,27 +2291,17 @@ for(i in 1:length(limits)){
     
     # data_limit <- data_limit %>% filter(dLat != 0)
     
-    formula <- paste("dLat ~ dSST *", trait)
+    formula <- paste("dLat ~ s(dSST *", trait, ")")
     
     M_trait <- gam(as.formula(formula),
-                   family = gaussian(link = "identity"),
+                   #family = gaussian(link = "identity"),
                     data = data_limit)
-    
-    #cooksd <- cooks.distance(M_trait)
-    #data_noOutliers <- data_limit[which(cooksd < 4*cooksd),]
-    
-    #M_trait <- rlm(as.formula(formula), 
-    #              data = data_noOutliers)
-    
-    LRT_trait <- drop1(M_trait, test = "Chisq")
     
     trait_dt <- data.table(limit = limits[i], 
                            temp_change = j,
                            trait = trait, 
                            model = list(M_trait),
-                           AIC = LRT_trait[2, ]$AIC, 
-                           RSS = LRT_trait[2, ]$RSS, 
-                           p.val = LRT_trait[2, ]$`Pr(>Chi)`, 
+                           p.val = M_trait[2, ]$`Pr(>Chi)`, 
                            response = 'raw')
     
     gam_models <- rbind(gam_models, trait_dt)
@@ -1915,6 +2317,100 @@ robust_models$Signif <- abs(robust_models$p.value.holm.adjust) < 0.05
 
 # get those that are significant from the independent models
 robust_models %>% filter(response == 'raw', p.value.holm.adjust < 0.05)
+
+
+
+
+
+##### Test using region as random factor
+#### Fit models to find best random effect structure ----
+
+# NULL MODELS - HERE WE WANT TO REMOVE ALL OF THE FIXED EFFECTS AND 
+# ONLY TEST FOR DIFFERENCES AMONGST RANDOM EFFECT STRUCTURES
+M0_dLat <- glmmTMB(dLat ~ 1,
+                   data = fish_traits, REML = T)
+M1_dLat <- glmmTMB(dLat ~ 1 + (1|region),
+                   data = fish_traits, REML = T)
+anova(M0_dLat, M1_dLat) 
+
+# REGION EXPLAINS SUBSTANTIAL VARIATION IN RESPONSES
+
+#        Df    AIC    BIC  logLik deviance  Chisq Chi Df
+#M0_dLat  2 6483.1 6493.6 -3239.5   6479.1              
+#M1_dLat  3 6474.0 6489.8 -3234.0   6468.0 11.073      1
+#          Pr(>Chisq)    
+#M0_dLat               
+#M1_dLat   0.000876 ***
+
+
+#### Fit models with no traits
+----
+fish_traits[, N:= .N, by = .(limit, region)]
+  
+limits <- c("northern", "southern")
+
+simple_models <- data.table() # empty data.table
+for(i in 1:length(limits)){
+    
+    ## fit models without log transformation
+    data_limit <- fish_traits[N > 10][limit == limits[i]]
+    
+    M_limit <- glmmTMB(dLat ~ dSST + (1|region), 
+                  data = data_limit)
+    
+    LRT_limit <- drop1(M_limit, test = "Chisq")
+    
+    limit_dt <- data.table(limit = limits[i], 
+                           model = list(M_limit),
+                           AIC = LRT_limit[2, ]$AIC, 
+                           RSS = LRT_limit[2, ]$RSS, 
+                           p.val = LRT_limit[2, ]$`Pr(>Chi)`, 
+                           response = 'raw')
+    
+    simple_models <- rbind(simple_models, limit_dt)
+    
+}
+
+
+
+#### Fit models to each trait to determine the effects of each variable ----
+
+### fit without random effects
+limits <- c("northern", "southern")
+
+traits_models <- data.table() # empty data.table
+for(i in 1:length(limits)){
+  for(trait in traits){
+    
+    ## fit models without log transformation
+    data_limit <- fish_traits[N > 10][limit == limits[i]]
+    
+    # data_limit <- data_limit %>% filter(dLat != 0)
+    
+    formula <- paste("dLat ~ dSST *", trait, "+ (1|region)")
+    
+    M_trait <- glmmTMB(as.formula(formula), 
+                       data = data_limit)
+    
+    LRT_trait <- drop1(M_trait, test = "Chisq")
+    
+    trait_dt <- data.table(limit = limits[i], 
+                           trait = trait, 
+                           model = list(M_trait),
+                           AIC = LRT_trait[2, ]$AIC, 
+                           RSS = LRT_trait[2, ]$RSS, 
+                           p.val = LRT_trait[2, ]$`Pr(>Chi)`, 
+                           response = 'raw')
+    
+    traits_models <- rbind(traits_models, trait_dt)
+    
+  }
+}
+
+# investigate holm corrections; adjusts significance level progressively based on the order of p-values as opposed to equally amongst traits
+traits_models$p.value.holm.adjust <- p.adjust(traits_models$p.val, method = 'holm')
+traits_models$Signif <- abs(traits_models$p.value.holm.adjust) < 0.05
+
 
 
 
