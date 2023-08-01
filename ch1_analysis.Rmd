@@ -651,6 +651,12 @@ rls_summary_regression <- ggplot(rls_summary, aes(x = dSST, y = dLat, col = guil
   geom_hline(yintercept = 0, lty = "dashed") +
   facet_grid(limit ~ guild, scales = 'free') +
   labs(x = "Changes in sea-surface temperature (°C)", y = "Changes in latitudinal limits (° latitude)", subtitle = "c") +
+  geom_text(data = rls_summary[limit == "northern" & guild == "tropical"],
+            aes(x = -2.7, y = -7, label = "p < 0.05"),
+            hjust = 0, vjust = -1, color = "black") +
+  geom_text(data = rls_summary[limit == "southern" & guild == "tropical"],
+            aes(x = -2.7, y = -15, label = "p = 0.05"),
+            hjust = 0, vjust = -1, color = "black") +
   theme_bw() +
   theme(strip.text.x = element_blank()) +
   guides(colour = "none")
@@ -820,8 +826,10 @@ rls_means_region_plot <- ggplot(rls_means_region,
 rls_ttest <- rls_summary[rls_means_region[, .(N), by = .(region, limit, guild)], on = .(region, limit, guild)][N > 10][, .(p.val = t.test(dLat, mu = 0)$p.val), by = .(region, limit, guild)]
 
 # investigate holm corrections; adjusts significance equally amongst groups
+rls_ttest$Signif <- abs(rls_ttest$p.val) < 0.05
 rls_ttest$p.value.bonf.adjust <- p.adjust(rls_ttest$p.val, method = 'bonferroni')
-rls_ttest$Signif <- abs(rls_ttest$p.value.bonf.adjust) < 0.05
+rls_ttest$p.value.holm.adjust <- p.adjust(rls_ttest$p.val, method = 'holm')
+rls_ttest$p.value.bh.adjust <- p.adjust(rls_ttest$p.val, method = 'BH')
 
 # Set guild color scheme
 guild_cols <- c(tropical = "#F8766D",
@@ -831,6 +839,73 @@ rls_summary <- rls_summary[, N:= .N, by = .(limit, guild, region)]
 
 library(cowplot)
 
+# Load necessary libraries
+library(cowplot)
+
+significant_guilds <- data.frame(
+  region = c("NA", "WA", "TAS"),
+  limit = c("southern", "southern", "southern"),
+  guild = c("tropical", "tropical", "temperate"),
+  y_pos = c(-0.4, 0.4, 0.2),
+  label = c("*", "*", "*")
+)
+
+regions <- c("NA", "WA", "SA", "SE", "TAS")
+# Create a list to store the final plots for each region
+region_plots <- list()
+
+# Generate the final plot for each region
+for (i in 1:length(regions)) {
+  # Create dotplot plot; use means with more than 10 data points
+  current_data <- rls_means_region[region == regions[i] & N > 10]
+
+  p1 <- ggplot(current_data, aes(x = guild, y = dLat_mean, col = guild)) +
+    geom_point(position = position_dodge(width = 0.3)) +
+    geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                      ymax = dLat_mean + dLat_se),
+                  width = 0.2, position = position_dodge(width = 0.3)) +
+    scale_color_manual(values = guild_cols) + 
+    geom_text(aes(label = paste("N =", N)),
+              size = 4, 
+              hjust = 1.3,
+              col = "black") +
+    geom_hline(yintercept = 0, lty = "dashed") +
+    facet_grid(limit ~ .) +
+    labs(y = "", x = "", subtitle = ifelse(regions[i] == "NA", "a", 
+                                           ifelse(regions[i] == "WA", "b",
+                                                  ifelse(regions[i] == "SA", "c",
+                                                         ifelse(regions[i] == "SE", "d", "e"))))) +
+    guides(colour = "none") +
+    theme_bw() +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+  
+  # Filter the significant guilds for the current region and limit
+  current_significant_guilds <- significant_guilds[significant_guilds$region == regions[i] &
+                                                    significant_guilds$limit == "southern", ]
+  
+  # Add asterisks to the plot for significant guilds
+  p1 <- p1 +
+    geom_text(data = current_significant_guilds,
+              aes(x = guild, y = y_pos, label = label),
+              color = "black")
+
+  # Store the final plot for the current region
+  region_plots[[regions[i]]] <- p1
+}
+
+# Create figure with map and dot plots
+plot_grid(
+  plot_grid(NULL, region_plots$WA, region_plots$SA, ncol = 1),
+  plot_grid(region_plots$`NA`, NULL, aus_map, ncol = 1, 
+            rel_heights = c(1, 0, 2),
+            rel_widths = c(1, 0, 2)),
+  plot_grid(NULL, region_plots$SE, region_plots$TAS, ncol = 1),
+  ncol = 3
+)
+
+
+#### ---- USE CODE BELOW TO ADD DOT PLOTS AND REGRESSIONS INTO ONE FIGURE
+
 regions <- c("NA", "WA", "SA", "SE", "TAS")
 # Create a list to store the final plots for each region
 region_plots <- list()
@@ -839,18 +914,18 @@ region_plots <- list()
 for (i in 1:length(regions)) {
   
   # Create regression plot
-#  p1 <- ggplot(rls_summary[N > 30 & region == regions[i]], 
-#                          aes(x = dSST, y = dLat, col = guild)) +
-#    geom_smooth(method = "glm") + 
-#    geom_hline(yintercept = 0, lty = "dashed") +
-#    scale_color_manual(values = guild_cols) +
-#    facet_grid(limit ~ .) +
-#    theme_bw() +
-#    guides(colour = "none") +
-#    theme(strip.text = element_blank())
+  p1 <- ggplot(rls_summary[N > 30 & region == regions[i]], 
+                          aes(x = dSST, y = dLat, col = guild)) +
+    geom_smooth(method = "glm") + 
+    geom_hline(yintercept = 0, lty = "dashed") +
+    scale_color_manual(values = guild_cols) +
+    facet_grid(limit ~ .) +
+    theme_bw() +
+    guides(colour = "none") +
+    theme(strip.text = element_blank())
 
-  # Create dotplot plot; use means with more than 30 data points
-  p2 <- ggplot(rls_means_region[region == regions[i] & N > 30], 
+  # Create dotplot plot; use means with more than 10 data points
+  p2 <- ggplot(rls_means_region[region == regions[i] & N > 10], 
                        aes(x = guild, y = dLat_mean, col = guild)) +
     geom_point(position = position_dodge(width = 0.3)) +
     geom_errorbar(aes(ymin = dLat_mean - dLat_se,
@@ -863,7 +938,7 @@ for (i in 1:length(regions)) {
               col = "black") +
     geom_hline(yintercept = 0, lty = "dashed") +
     facet_grid(limit ~ .) +
-    labs(y = "") +
+    labs(y = "", X = "") +
     guides(colour = "none") +
     theme_bw() +
     theme(axis.text.y = element_blank())
@@ -938,177 +1013,38 @@ plot_grid(
   ncol = 3
 )
 
+```
 
+##### TAS invert plot
+```{r}
+# Get means
+rls_summary[, mean(dLat, na.rm = T), by = .(class)]
 
-
-
-
-
-# Create NA_regression plot
-NA_regression <- ggplot(rls_summary[N > 50 & region == "NA"], 
-                        aes(x = dSST, y = dLat, col = guild)) +
-  geom_smooth(method = "glm") + 
-  geom_hline(yintercept = 0, lty = "dashed") +
-  scale_color_manual(values = guild_cols) +
-  facet_grid(limit ~ .) +
-  theme_bw() +
-  guides(colour = "none") +
-  theme(strip.text = element_blank())
-
-# Create NA_dotplot plot
-NA_dotplot <- ggplot(rls_means_region[region == "NA" & N > 10], 
-                     aes(x = guild, y = dLat_mean, col = guild)) +
-  geom_point(position = position_dodge(width = 0.3)) +
-  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                    ymax = dLat_mean + dLat_se),
-                width = 0.2, position = position_dodge(width = 0.3)) +
-  scale_color_manual(values = guild_cols) + 
-  geom_text(aes(label = paste("N =", N)),
+# Plot the data with boxplots and jitter
+ggplot(rls_summary[region == "TAS" & limit == "southern"], 
+       aes(x = class, y = dLat)) +
+  geom_boxplot() +
+  geom_jitter(color = "grey", alpha = 0.7) +
+  
+  # Add the mean values as text labels to the plot
+  geom_text(data = rls_summary[region == "TAS" & limit == "southern" & class == "fish"], 
+            aes(x = class, y = 3,
+                label = "mean = -0.07"), 
             size = 4, 
             hjust = 1.3,
             col = "black") +
-  geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(limit ~ .) +
-  labs(y = "") +
-  guides(colour = "none") +
-  theme_bw() +
-  theme(axis.text.y = element_blank(),
-        axis.ticks.y = element_blank())
-
-# Set common y-axis limits based on the maximum range of both plots
-y_limits <- range(c(layer_scales(NA_regression)$y$range$range,
-                    layer_scales(NA_dotplot)$y$range$range))
-
-# Update NA_regression plot with common y-axis limits
-NA_regression <- NA_regression +
-  ylim(y_limits)
-
-# Update NA_dotplot plot with common y-axis limits
-NA_dotplot <- NA_dotplot +
-  ylim(y_limits)
-
-# Combine the two plots using cowplot
-library(cowplot)
-
-NA_plot <- plot_grid(NA_regression, NA_dotplot,
-                     labels = c("A", "B"),
-                     ncol = 2,
-                     align = "h",
-                     axis = "lr",
-                     rel_widths = c(2, 1))
-
-# Display the final plot
-NA_plot
-
-
-# WA plot
-WA_regression <- ggplot(ext_sites[N > 50][region == "WA"], 
-                        aes(x = dSST, y = dLat, col = guild)) +
-  geom_smooth(method = "glm") + 
-  geom_hline(yintercept = 0, lty = "dashed") +
-  scale_color_manual(values = guild_cols) +
-  facet_grid(limit ~.) +
-  ylim(-1, 3) +
-  theme_bw() +
-  guides(colour = "none") +
-  theme(strip.text = element_blank())
-
-WA_dotplot <- ggplot(rls_means_region[region == "WA" & N > 10], aes(x = class, y = dLat_mean, col = guild)) +
-  geom_point(position = position_dodge(width = 0.3)) +
-  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                    ymax = dLat_mean + dLat_se),
-                width = 0.2, position = position_dodge(width = 0.3)) +
-  scale_color_manual(values = guild_cols) + 
-  geom_text(aes(label = paste("N =", N)),
+  geom_text(data = rls_summary[region == "TAS" & limit == "southern" & class == "invertebrate"], 
+            aes(x = class, y = 3,
+                label = "mean = 0.11"),
             size = 4, 
             hjust = 1.3,
             col = "black") +
+  
+  # Add a dashed horizontal line at y = 0
   geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(limit ~.) +
-  labs(y = "") +
-  guides(colour = "none") +
+  labs(y = "Changes in latitudinal limits (° latitude)", x = "") +
   theme_bw() +
-  theme(axis.text.y = element_blank(),
-        axis.ticks.y = element_blank())
-
-WA_plot <- ggarrange(WA_regression, WA_dotplot,
-                     nrow = 1, ncol = 2,
-                     widths = c(2, 1)) #THERE IS SOMETHING WEIRD IN THIS PLOT; CHECK WITH ORIGINAL REGRESSION PLOTS
-
-
-
-WA_plot <- ggplot(rls_means_region[region == "WA" & N > 10], aes(x = limit, y = dLat_mean, col = guild)) +
-  geom_point(position = position_dodge(width = 0.3)) +
-  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                    ymax = dLat_mean + dLat_se),
-                width = 0.2, position = position_dodge(width = 0.3)) +
-  scale_color_manual(values = guild_cols) + 
-  geom_text(aes(label = paste("N =", N)), 
-            size = 4, 
-            hjust = -0.4,
-            col = "black") + 
-  geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(.~ class) +
-  labs(y = "dLat", subtitle = "b", fontface = "bold") +
-  guides(colour = "none") +
-  theme_bw()
-
-SA_plot <- ggplot(rls_means_region[region == "SA" & N > 10], aes(x = limit, y = dLat_mean, col = guild)) +
-  geom_point(position = position_dodge(width = 0.3)) +
-  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                    ymax = dLat_mean + dLat_se),
-                width = 0.2, position = position_dodge(width = 0.3)) +
-  scale_color_manual(values = guild_cols) + 
-  geom_text(aes(label = paste("N =", N)),  
-            size = 4, 
-            hjust = -0.2,
-            col = "black") +
-  geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(.~ class) +
-  labs(y = "dLat", subtitle = "c", fontface = "bold") +
-  guides(colour = "none") +
-  theme_bw()
-
-SE_plot <- ggplot(rls_means_region[region == "SE" & N > 10], aes(x = limit, y = dLat_mean, col = guild)) +
-  geom_point(position = position_dodge(width = 0.3)) +
-  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                    ymax = dLat_mean + dLat_se),
-                width = 0.2, position = position_dodge(width = 0.3)) +
-  scale_color_manual(values = guild_cols) + 
-  geom_text(aes(label = paste("N =", N)), 
-            size = 4, 
-            hjust = -0.3,
-            col = "black") +
-  geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(.~ class) +
-  labs(y = "dLat", subtitle = "d", fontface = "bold") +
-  guides(colour = "none") +
-  theme_bw()
-
-TAS_plot <- ggplot(rls_means_region[region == "TAS" & N > 10], aes(x = limit, y = dLat_mean, col = guild)) +
-  geom_point(position = position_dodge(width = 0.3)) +
-  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                    ymax = dLat_mean + dLat_se),
-                width = 0.2, position = position_dodge(width = 0.3)) +
-  scale_color_manual(values = guild_cols) + 
-  geom_text(aes(label = paste("N =", N)), 
-            size = 4, 
-            hjust = -0.2,
-            col = "black") +
-  geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(.~ class) +
-  labs(y = "dLat", subtitle = "e", fontface = "bold") +
-  guides(col = "none") +
-  theme_bw()
-
-library(cowplot)
-
-plot_grid(
-  plot_grid(NULL, WA_plot, SA_plot, ncol = 1),
-  plot_grid(NA_plot, NULL, aus_map, ncol = 1, rel_heights = c(1, 0, 2)),
-  plot_grid(NULL, SE_plot, TAS_plot, ncol = 1),
-  ncol = 3
-)
+  guides(fill = "none")
 
 ```
 
