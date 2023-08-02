@@ -1021,10 +1021,10 @@ plot_grid(
 rls_summary[, mean(dLat, na.rm = T), by = .(class)]
 
 # Plot the data with boxplots and jitter
-ggplot(rls_summary[region == "TAS" & limit == "southern"], 
-       aes(x = class, y = dLat)) +
+tas1 <- ggplot(rls_summary[region == "TAS" & limit == "southern"], 
+               aes(x = class, y = dLat)) +
   geom_boxplot() +
-  geom_jitter(color = "grey", alpha = 0.7) +
+  geom_jitter(aes(size = max_depth, col = presence), alpha = 0.7) +
   
   # Add the mean values as text labels to the plot
   geom_text(data = rls_summary[region == "TAS" & limit == "southern" & class == "fish"], 
@@ -1045,6 +1045,21 @@ ggplot(rls_summary[region == "TAS" & limit == "southern"],
   labs(y = "Changes in latitudinal limits (° latitude)", x = "") +
   theme_bw() +
   guides(fill = "none")
+
+# Tasmania temperature plot
+tas_sites <- rls.raw[site_code %in% c(rls_summary[region == "TAS"]$site1, rls_summary[region == "TAS"]$site2)][, lapply(.SD, unique), by = .(survey_id, survey_date), .SDcols = c("site_code", "latitude", "longitude")][sst_data[, .(survey_id, mean_sst)], on= .(survey_id), nomatch = NULL] 
+
+tas_sites <- tas_sites[!is.na(mean_sst)] 
+
+tas2 <- ggplot(tas_sites[site_code != "BMP-S11", .(mean_sst = mean(mean_sst)), by = .(survey_date)], aes(x = survey_date, y = mean_sst)) + 
+  geom_line() + 
+  geom_smooth(method = "glm") +
+  labs(y = "Average temperature (°C)", x = "") +
+  theme_bw()
+
+ggarrange(tas1 + theme(legend.position = "top"), tas2,
+          ncol = 1, nrow = 2, 
+          heights = c(1, 0.3))
 
 ```
 
