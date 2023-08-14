@@ -772,7 +772,7 @@ aus_map <- ggplot() +
   geom_sf(data = st_union(aus_sf)) + # Continent polygon
   
   # sites included in analysis
-  geom_point(data = rls_summary, 
+  geom_point(data = rls_sites, 
              aes(x = longitude, y = latitude),
              shape = 1, col = "black", size = 3) +
   
@@ -782,6 +782,25 @@ aus_map <- ggplot() +
                        breaks = seq(-0.2, 0.7, 0.2),
                        limits = c(-0.2, 0.7)) +
   
+  # Arrows to depict ocean currents
+  geom_curve(aes(x = 155, y = -10, xend = 155, yend = -40),
+             col = "red",
+             curvature = -0.5,
+             arrow = arrow(type = "closed", length = unit(0.2, "inches")),
+             lineend = "round",
+             linewidth = 2) + # EAC
+  
+  geom_curve(aes(x = 120, y = -41, xend = 140, yend = -41),
+             col = "blue",
+             curvature = -0.3,
+             arrow = arrow(type = "closed", length = unit(0.2, "inches")),
+             lineend = "round",
+             linewidth = 1) +
+  
+  # labels
+  geom_text(aes(x = 165, y = -25, label = "EAC"), fontface = "bold") +
+  geom_text(aes(x = 130, y = -40, label = "LZC"), fontface = "bold") +
+  
   # regional divisions
   geom_segment(aes(x = 114, y = -23, xend = 110, yend = -23), linewidth = 2) +
   geom_spoke(aes(x = 120, y = -34), angle = -90, radius = 11, linewidth = 2) +
@@ -789,16 +808,16 @@ aus_map <- ggplot() +
   geom_curve(aes(x = 143, y = -44, xend = 150, yend = -44), curvature = -1.4, angle = 95, linewidth = 2) +
   
   # labels
-  geom_text(aes(x = 115, y = -10, label = "a"), fontface = "bold") +
-  geom_text(aes(x = 111, y = -32, label = "b"), fontface = "bold") +
-  geom_text(aes(x = 130, y = -36, label = "c"), fontface = "bold") +
-  geom_text(aes(x = 157, y = -35, label = "d"), fontface = "bold") +
-  geom_text(aes(x = 140, y = -43, label = "e"), fontface = "bold") +
+  geom_text(aes(x = 115, y = -10, label = "NA"), fontface = "bold") +
+  geom_text(aes(x = 111, y = -32, label = "WA"), fontface = "bold") +
+  geom_text(aes(x = 130, y = -35, label = "SA"), fontface = "bold") +
+  geom_text(aes(x = 157, y = -35, label = "SE"), fontface = "bold") +
+  geom_text(aes(x = 140, y = -43, label = "TAS"), fontface = "bold") +
   
   # adjust axes labels
-  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 160), label = paste0(seq(110, 160, by = 10), "°E")) +
+  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 165), label = paste0(seq(110, 160, by = 10), "°E")) +
   scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
-  labs(fill = "dSST per decade (°C)", x = NULL, y = NULL) +
+  labs(fill = "dSST per decade (°C)", x = NULL, y = NULL, colour = NULL) +
   theme_bw() +
   theme(legend.position = "bottom", legend.direction = "horizontal")  
 
@@ -1146,7 +1165,7 @@ means_region_ttest$Signif <- abs(means_region_ttest$p.value.holm.adjust) < 0.05
 
 ```
 
-##### IDW maps of dLat 
+##### IDW maps
 ```{r}
 library(sf) # processing spatial vector data
 library(raster) # manipulating rasters
@@ -1158,7 +1177,80 @@ aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
 crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
 aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
 
-# Northern limit
+# Site-level temperature change
+rls_sites_sf <- st_as_sf(rls_summary[rls_summary[, .(dSST), by = .(site1, longitude, latitude)][, .N, by = .(site1)], on = .(site1)][N > 2][, .(dSST = mean(dSST)), by = .(site1, longitude, latitude)], coords = c("longitude", "latitude"), crs = crs(aus_pols))
+
+grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
+  st_as_sfc() %>% 
+  st_make_grid(
+    cellsize = c(1, 1), # 1 degree cell size
+    what = "centers"
+  ) %>%
+  st_as_sf() %>%
+  cbind(., st_coordinates(.)) %>% 
+  st_drop_geometry() %>% 
+  mutate(Z = 0) %>%
+  raster::rasterFromXYZ( # Convert to raster object
+    crs = crs(aus_pols)
+  )
+
+# Fit an inverse distance weighted mean model
+fit_IDW <- gstat::gstat(
+  formula = dSST ~ 1,
+  maxdist = 220, vdist = T, #radius of 2 degrees
+  data = as(rls_sites_sf, "Spatial")
+)
+
+# Make sure data and new data have same CRS
+crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+# Interpolate
+interp_IDW <- interpolate(grd, fit_IDW) 
+
+# Convert raster to points
+pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
+colnames(pnts) <- c("lon", "lat", "dSST")
+
+# Plot
+site_level_heatmap <- ggplot() +
+  
+  # Rasters
+  geom_raster(data= pnts, aes(lon, lat, fill = dSST)) + # dSST
+  geom_sf(data = st_union(aus_sf)) + # Continent polygon
+  
+  # sites included in analysis
+  geom_point(data = rls_summary, 
+             aes(x = longitude, y = latitude),
+             shape = 1, col = "black", size = 3) +
+  
+  # manual color scale
+  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
+                       midpoint = 0,
+                       breaks = seq(-2.3, 2, 0.8),
+                       limits = c(-2.3, 2)) +
+  
+  # regional divisions
+  geom_segment(aes(x = 114, y = -23, xend = 110, yend = -23), linewidth = 2) +
+  geom_spoke(aes(x = 120, y = -34), angle = -90, radius = 11, linewidth = 2) +
+  geom_segment(aes(x = 150, y = -23, xend = 160, yend = -23), linewidth = 2) +
+  geom_curve(aes(x = 143, y = -44, xend = 150, yend = -44), curvature = -1.4, angle = 95, linewidth = 2) +
+  
+  # labels
+  geom_text(aes(x = 115, y = -10, label = "a"), fontface = "bold") +
+  geom_text(aes(x = 111, y = -32, label = "b"), fontface = "bold") +
+  geom_text(aes(x = 130, y = -36, label = "c"), fontface = "bold") +
+  geom_text(aes(x = 157, y = -35, label = "d"), fontface = "bold") +
+  geom_text(aes(x = 140, y = -43, label = "e"), fontface = "bold") +
+  
+  # adjust axes labels
+  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 160), label = paste0(seq(110, 160, by = 10), "°E")) +
+  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
+  labs(fill = "dSST (°C)", x = NULL, y = NULL) +
+  theme_bw() +
+  theme(legend.position = "bottom", legend.direction = "horizontal")  
+
+
+# Northern limit dLat
 # Average dLat by site and remove those with less than 3 data points
 rls_dLat <- rls_summary[limit == "northern"][rls_summary[limit == "northern", .(dLat), by = .(site1, longitude, latitude)][, .N, by = .(site1)], on = .(site1)][N > 2][, .(dLat = mean(dLat)), by = .(site1, longitude, latitude)]
 
@@ -1419,6 +1511,132 @@ dCGI_plot <- ggplot() +
 ggarrange(dLatN_plot, dCTI_plot,
           dLatS_plot, dCGI_plot,
           nrow = 2, ncol = 2)
+
+####---- East Coast flux map
+
+# Northern limit dLat
+# Average dLat by site and remove those with less than 3 data points
+rls_dLat <- rls_summary[limit == "northern"][rls_summary[limit == "northern", .(dLat), by = .(site1, longitude, latitude)][, .N, by = .(site1)], on = .(site1)][N > 3][, .(dLat = mean(dLat)), by = .(site1, longitude, latitude)]
+
+# Simple features object
+rls_dLat_sf <- st_as_sf(rls_dLat, coords = c("longitude", "latitude"), crs = crs(aus_pols))
+
+grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
+  st_as_sfc() %>% 
+  st_make_grid(
+    cellsize = c(1, 1), # 1 degree cell size
+    what = "centers"
+  ) %>%
+  st_as_sf() %>%
+  cbind(., st_coordinates(.)) %>% 
+  st_drop_geometry() %>% 
+  mutate(Z = 0) %>%
+  raster::rasterFromXYZ( # Convert to raster object
+    crs = crs(aus_pols)
+  )
+
+# Fit an inverse distance weighted mean model
+fit_IDW <- gstat::gstat(
+  formula = dLat ~ 1,
+  maxdist = 220, vdist = T, #radius of 2 degrees
+  data = as(rls_dLat_sf, "Spatial")
+)
+
+# Make sure data and new data have same CRS
+crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+# Interpolate
+interp_IDW <- interpolate(grd, fit_IDW) 
+
+# Convert raster to points
+pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
+colnames(pnts) <- c("lon", "lat", "dLat")
+
+# Plot
+dLatN_plot <- ggplot() +
+  # Rasters
+  geom_raster(data= pnts, aes(lon, lat, fill = dLat)) +
+  geom_sf(data = st_union(aus_sf)) + # Continent polygon
+  
+  # manual color scale
+  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
+                       midpoint = 0,
+                       breaks = seq(-0.8, 1.6, 0.5),
+                       limits = c(-0.8, 1.6)) +
+  
+  scale_x_continuous(breaks = seq(140, 160, by = 10), limits = c(140, 160), label = paste0(seq(140, 160, by = 10), "°E")) +
+  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
+  labs(fill = "dLat: N", subtitle = "Northern limit flux") +
+  theme_bw()
+
+# Southern
+# Average dLat by site and remove those with less than 3 data points
+rls_dLat <- rls_summary[limit == "southern"][rls_summary[limit == "southern", .(dLat), by = .(site1, longitude, latitude)][, .N, by = .(site1)], on = .(site1)][N > 3][, .(dLat = mean(dLat)), by = .(site1, longitude, latitude)]
+
+# Simple features object
+rls_dLat_sf <- st_as_sf(rls_dLat, coords = c("longitude", "latitude"), crs = crs(aus_pols))
+
+grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
+  st_as_sfc() %>% 
+  st_make_grid(
+    cellsize = c(1, 1), # 1 degree cell size
+    what = "centers"
+  ) %>%
+  st_as_sf() %>%
+  cbind(., st_coordinates(.)) %>% 
+  st_drop_geometry() %>% 
+  mutate(Z = 0) %>%
+  raster::rasterFromXYZ( # Convert to raster object
+    crs = crs(aus_pols)
+  )
+
+# Fit an inverse distance weighted mean model
+fit_IDW <- gstat::gstat(
+  formula = dLat ~ 1,
+  maxdist = 220, vdist = T, #radius of 2 degrees
+  data = as(rls_dLat_sf, "Spatial")
+)
+
+# Make sure data and new data have same CRS
+crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+# Interpolate
+interp_IDW <- interpolate(grd, fit_IDW) 
+
+# Convert raster to points
+pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
+colnames(pnts) <- c("lon", "lat", "dLat")
+
+# Plot
+dLatS_plot <- ggplot() +
+  # Rasters
+  geom_raster(data= pnts, aes(lon, lat, fill = dLat)) +
+  geom_sf(data = st_union(aus_sf)) + # Continent polygon
+  
+  # manual color scale
+  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
+                       midpoint = 0,
+                       breaks = seq(-3.5, 2.8, 1.3),
+                       limits = c(-3.5, 2.8)) +
+  
+  scale_x_continuous(breaks = seq(140, 160, by = 10), limits = c(140, 160), label = paste0(seq(140, 160, by = 10), "°E")) +
+  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
+  labs(fill = "dLat: S", subtitle = "Southern limit flux") +
+  theme_bw()
+
+# Collate plots
+ggarrange(dLatN_plot, dLatS_plot,
+          nrow = 1, ncol = 2)
+
+```
+##### Barplot with proportions
+```{r}
+ggplot(rls_summary[abs(dLat) > 0.5], aes(x = guild,  fill = limit)) +
+  geom_bar(position = "dodge") +
+  labs(x = "") +
+  theme_bw()
+
+chisq.test(table(rls_summary$guild, rls_summary$limit))
 ```
 
 
