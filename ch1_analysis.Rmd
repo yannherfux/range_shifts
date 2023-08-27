@@ -526,11 +526,11 @@ rls_summary <- rls.raw[, .(family = unique(family)), by = .(taxon)][rls_summary,
 
 #### Add bioregions based on latitude and longitude extremes
 ```{r}
-rls_summary <- rls_summary[, region:= ifelse(lat1 > -23, "NA",
-                                             ifelse(lat1 < -23 & lon1 < 120, "WA",
-                                                    ifelse(lat1 %between% c(-40, -30) & lon1 %between% c(120, 147), "SA",
-                                                           ifelse(lat1 %between% c(-40, -23) & lon1 > 147, "SE", 
-                                                                  ifelse(lat1 > -23 & lon1 > 147, "NA", "TAS"))))),
+rls_summary <- rls_summary[, region:= ifelse(lat1 > -20.5 & lon1 < 147, "N",
+                                             ifelse(lat1 < -20.5 & lon1 < 117, "SW",
+                                                    ifelse(lat1 %between% c(-40, -30) & lon1 %between% c(120, 147), "S",
+                                                           ifelse(lat1 %between% c(-40, -25) & lon1 > 147, "SE", 
+                                                                  ifelse(lat1 > -25 & lon1 > 147, "N", "TAS"))))),
                            by = .(taxon, limit)]
 ```
 
@@ -603,8 +603,118 @@ rls_summary <- rls_summary[, ':=' (guild = factor(guild, levels = c("tropical", 
                                    trophic_group = factor(trophic_group),
                                    habitat = factor(ifelse(habitat == "Coral", "coral",
                                                            ifelse(habitat == "Sand", "sand", habitat)), levels = c("coral", "rock", "sand", "water column")),
-                                   region = factor(region, levels = c("NA", "WA", "SA", "SE", "TAS")),
+                                   region = factor(region, levels = c("N", "SW", "S", "SE", "TAS")),
                                    limit = factor(limit, levels = c("northern", "southern")))]
+```
+
+##### Intorductory figure
+```{r}
+library(patchwork)
+library(cowplot)
+library(ggpubr)
+
+# Set guild color scheme
+guild_cols <- c(tropical = "#F8766D",
+                temperate = "#00BFC4")
+
+# Categorize shifts
+rls_summary[, dir:= ifelse(dLat > 1, "north", 
+                           ifelse(dLat < -1, "south",
+                                  "static"))]
+
+# Need to make sure both plots have the same latitudes and same bins
+
+region_plots <- list()
+for(i in rls_summary[, unique(region)]){
+  
+  # Subset data
+  data_p1 <- rls_summary[dir != "static" & region == i]
+  data_p1[, N:= .N, by = .(limit)]
+  
+  ## Create histogram
+  p1 <- ggplot(data_p1[N > 3],
+               aes(y = lat1, fill = dir)) + 
+    geom_histogram(binwidth = 2, boundary = 1, position = "dodge") +
+    facet_grid(limit ~.) +
+    labs(x = "", y = "Latitude", subtitle = ifelse(i == "N", "a",
+                                                   ifelse(i == "SW", "b",
+                                                          ifelse(i == "S", "c", 
+                                                                 ifelse(i == "SE", "d", "e"))))) +
+    theme_bw() +
+    theme(panel.grid = element_blank(),
+          strip.text = element_blank()) +
+    guides(fill = "none")
+  
+  ## Create gradient plot
+  
+  # Seperate TAS plot
+  if(i == "TAS"){
+    
+    data_p2 <- data.table(region = c("TAS", "TAS", "TAS"),
+                          limit = c("southern", "southern", "southern"),
+                          lat1 = c(-40, -42, -44),
+                          dSST = c(0.5, 0.5, 0.01))
+  }
+  else{
+    
+    data_p2 <- data_p1[N > 3][, .(dSST = mean(dSST)), by = .(region, limit, lat1 = round(lat1, 0.2))]
+    
+  }
+  
+  # Calculate the y-axis limits from p1
+  y_range <- ggplot_build(p1)$layout$panel_scales_y[[1]]$range$range
+  
+  p2 <- ggplot(data_p2,
+               aes(x = region, y = lat1, fill = dSST)) +
+    geom_tile() +
+    scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
+                         midpoint = 0,
+                         breaks = seq(signif(min(data_p2$dSST), 1), 
+                                      signif(max(data_p2$dSST), 1),
+                                      length.out = 5),
+                         limits = c(signif(min(data_p2$dSST), 1), signif(max(data_p2$dSST), 1))) +
+    facet_grid(limit ~.) +
+    ylim(y_range) +
+    labs(y = "Latitude") +
+    theme_bw() +
+    theme(axis.title.x = element_blank(),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          panel.grid = element_blank())
+  
+  # Adjust the heights of p1 and p2
+  p1 <- p1 + coord_cartesian(ylim = y_range) +
+    theme(plot.margin = margin(1, 1, 0.5, 0.5, "cm")) +
+    plot_layout(heights = c(1))  # Adjust the height as needed
+  
+  p2 <- p2 + coord_cartesian(ylim = y_range) +
+    theme(plot.margin = margin(0.5, 1, 1, 0.5, "cm")) +
+    plot_layout(heights = c(1))  # Adjust the height as needed
+  
+  # Combine plots
+  p3 <- p1 + p2 +
+    plot_layout(guides = "collect", # Collect guides from both plots
+                widths = c(0.8, 0.2)) # make gradient plot thinner
+  
+  # Add to list of region plots
+  region_plots[[i]] <- p3 
+}
+
+# Collate next to aus_map
+ggarrange(aus_map, wrap_plots(region_plots[c(5, 4, 1, 2, 3)]), ncol = 2, widths = c(0.3, 1))
+
+# Collate around aus_map
+plot_grid(region_plots$SW, region_plots$N, region_plots$SE,
+          region_plots$S, aus_map, region_plots$TAS,
+          ncol = 3, nrow = 2,
+          widths = c(0.8, 0.8, 0.8,
+                     0.8, 0.3, 0.8),
+          heights = c(0.3, 0.3, 0.3,
+                      0.3, 1, 0.3))
+
 ```
 
 ##### Summary Plots
@@ -690,11 +800,216 @@ for(j in unique(rls_summary$guild)){
 
 # Both tropical trends are significant -> evidence that northern limit is highly significant
 
+ggarrange(ggarrange(rls_summary_vp, rls_means_plot_wt,
+                    nrow = 1),
+          rls_summary_regression,
+          nrow = 2)
+```
+
+
+
+##### Temperature maps
+```{r}
+#### ----- Temperature maps
+library(sf) # processing spatial vector data
+library(raster) # manipulating rasters
+library(terra) # spatial data analysis
+library(gstat) # producing inverse distance weighted means
+
+## Decadal temperature change
+site_sst <- fread(paste0(dir, "/Raw Data/site_sst_yearly.csv")) #nrows = 12,570
+
+# Add coordinates
+site_sst <- site_sst[rls[, .(latitude = unique(latitude), longitude = unique(longitude)), by = .(site_code)], on = .(site_code), nomatch = NULL]
+
+# Linear regression to obtain mean SST change throughout the decade
+site_sst <- site_sst[, .(sst_lm = list(lm(mean_sst ~ year)),
+                           year_i = min(year),
+                           year_f = max(year),
+                           latitude = mean(latitude),
+                           longitude = mean(longitude)),
+                       by = .(site_code)]
+
+# Extract sst_t1, sst_t2 and dSST
+site_sst <- site_sst[, ':=' (sst_t1 = sst_lm[[1]]$coefficients["(Intercept)"] + sst_lm[[1]]$coefficients["year"] * year_i,
+                               sst_t2 = sst_lm[[1]]$coefficients["(Intercept)"] + sst_lm[[1]]$coefficients["year"] * year_f,
+                               dSST = sst_lm[[1]]$coefficients["year"]),
+                       by = .(site_code)]
+
+# Create simple features objects and a spatial grid for interpolation
+aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
+crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
+aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
+
+rls_sites_sf <- st_as_sf(site_sst, coords = c("longitude", "latitude"), crs = crs(aus_pols))
+
+grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
+  st_as_sfc() %>% 
+  st_make_grid(
+    cellsize = c(1, 1), # 1 degree cell size
+    what = "centers"
+  ) %>%
+  st_as_sf() %>%
+  cbind(., st_coordinates(.)) %>% 
+  st_drop_geometry() %>% 
+  mutate(Z = 0) %>%
+  raster::rasterFromXYZ( # Convert to raster object
+    crs = crs(aus_pols)
+  )
+
+# Fit an inverse distance weighted mean model
+fit_IDW <- gstat::gstat(
+  formula = dSST ~ 1,
+  maxdist = 220, vdist = T, #radius of 2 degrees
+  data = as(rls_sites_sf, "Spatial")
+)
+
+# Make sure data and new data have same CRS
+crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+# Interpolate
+interp_IDW <- interpolate(grd, fit_IDW) 
+
+# Convert raster to points
+pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
+colnames(pnts) <- c("lon", "lat", "dSST")
+pnts$dSST <- pnts$dSST * 10 # convert units to dSST/decade
+
+# Plot
+aus_map <- ggplot() +
+  
+  # Rasters
+  geom_raster(data= pnts, aes(lon, lat, fill = dSST)) + # dSST
+  geom_sf(data = st_union(aus_sf)) + # Continent polygon
+  
+  # sites included in analysis
+  geom_point(data = rls_sites, 
+             aes(x = longitude, y = latitude),
+             shape = 1, col = "black", size = 3) +
+  
+  # manual color scale
+  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
+                       midpoint = 0,
+                       breaks = seq(-0.2, 0.7, 0.2),
+                       limits = c(-0.2, 0.7)) +
+  
+  # regional divisions
+  geom_spoke(aes(x = 115, y = -21.5, angle = 90, radius = 11), linewidth = 1) +
+  geom_spoke(aes(x = 120, y = -34), angle = -90, radius = 11, linewidth = 1) +
+  geom_segment(aes(x = 153, y = -26, xend = 160, yend = -26), linewidth = 1) +
+  geom_curve(aes(x = 143, y = -44, xend = 150, yend = -44), curvature = -1.4, angle = 95, linewidth = 1) +
+  
+  # labels
+  geom_text(aes(x = 115, y = -10, label = "N"), fontface = "bold") +
+  geom_text(aes(x = 111, y = -32, label = "SW"), fontface = "bold") +
+  geom_text(aes(x = 130, y = -35, label = "S"), fontface = "bold") +
+  geom_text(aes(x = 157, y = -35, label = "SE"), fontface = "bold") +
+  geom_text(aes(x = 140, y = -43, label = "TAS"), fontface = "bold") +
+  
+  # adjust axes labels
+  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 165), label = paste0(seq(110, 160, by = 10), "°E")) +
+  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
+  labs(fill = "dSST per decade (°C)", x = NULL, y = NULL, colour = NULL) +
+  theme_bw() +
+  theme(legend.position = "bottom", legend.direction = "horizontal") 
+
+## Site-level temperature change
+
+rls_sites_sf <- st_as_sf(rls_summary[rls_summary[, .(dSST), by = .(site1, longitude, latitude)][, .N, by = .(site1)], on = .(site1)][N > 2][, .(dSST = mean(dSST)), by = .(site1, longitude, latitude)], coords = c("longitude", "latitude"), crs = crs(aus_pols))
+
+grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
+  st_as_sfc() %>% 
+  st_make_grid(
+    cellsize = c(1, 1), # 1 degree cell size
+    what = "centers"
+  ) %>%
+  st_as_sf() %>%
+  cbind(., st_coordinates(.)) %>% 
+  st_drop_geometry() %>% 
+  mutate(Z = 0) %>%
+  raster::rasterFromXYZ( # Convert to raster object
+    crs = crs(aus_pols)
+  )
+
+# Fit an inverse distance weighted mean model
+fit_IDW <- gstat::gstat(
+  formula = dSST ~ 1,
+  maxdist = 220, vdist = T, #radius of 2 degrees
+  data = as(rls_sites_sf, "Spatial")
+)
+
+# Make sure data and new data have same CRS
+crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+# Interpolate
+interp_IDW <- interpolate(grd, fit_IDW) 
+
+# Convert raster to points
+pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
+colnames(pnts) <- c("lon", "lat", "dSST")
+
+# Plot
+site_level_heatmap <- ggplot() +
+  
+  # Rasters
+  geom_raster(data= pnts, aes(lon, lat, fill = dSST)) + # dSST
+  geom_sf(data = st_union(aus_sf)) + # Continent polygon
+  
+  # sites included in analysis
+  geom_point(data = rls_summary, 
+             aes(x = longitude, y = latitude),
+             shape = 1, col = "black", size = 3) +
+  
+  # manual color scale
+  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
+                       midpoint = 0,
+                       breaks = seq(-2.3, 2, 0.8),
+                       limits = c(-2.3, 2)) +
+  
+  # regional divisions
+  geom_spoke(aes(x = 115, y = -21.5, angle = 90, radius = 11), linewidth = 1) +
+  geom_spoke(aes(x = 120, y = -34), angle = -90, radius = 11, linewidth = 1) +
+  geom_segment(aes(x = 153, y = -26, xend = 160, yend = -26), linewidth = 1) +
+  geom_curve(aes(x = 143, y = -44, xend = 150, yend = -44), curvature = -1.4, angle = 95, linewidth = 1) +
+  
+  # labels
+  geom_text(aes(x = 115, y = -10, label = "N"), fontface = "bold") +
+  geom_text(aes(x = 111, y = -32, label = "SW"), fontface = "bold") +
+  geom_text(aes(x = 130, y = -35, label = "S"), fontface = "bold") +
+  geom_text(aes(x = 157, y = -35, label = "SE"), fontface = "bold") +
+  geom_text(aes(x = 140, y = -43, label = "TAS"), fontface = "bold") +
+  
+  # adjust axes labels
+  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 160), label = paste0(seq(110, 160, by = 10), "°E")) +
+  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
+  labs(fill = "dSST (°C)", x = NULL, y = NULL) +
+  theme_bw() +
+  theme(legend.position = "bottom", legend.direction = "horizontal")
+
+# Bar plots with proportions
+rls_barplot <- rls_summary
+rls_barplot[, move:= ifelse(abs(dLat) > 1 & limit == "northern",
+                            "northern moving",
+                            ifelse(abs(dLat) > 1 & limit == "southern",
+                                   "southern moving", "static"))]
+
+limit_barplot <- ggplot(rls_barplot, aes(x = region,  fill = move)) +
+  geom_bar(position = "dodge") +
+  labs(x = "") +
+  facet_wrap(guild ~.) +
+  theme_bw() +
+  guides(fill = "none")
+
+# Collate plots
 library(ggpubr)
 
-ggarrange(rls_summary_vp, rls_means_plot_wt, rls_summary_regression,
-          nrow = 3, ncol = 1)
+ggarrange(ggarrange(aus_map, site_level_heatmap,
+                    nrow = 1),
+          limit_barplot,
+          nrow = 2)
 ```
+
+
 
 ##### Regional map with means
 ```{r}
@@ -782,44 +1097,25 @@ aus_map <- ggplot() +
                        breaks = seq(-0.2, 0.7, 0.2),
                        limits = c(-0.2, 0.7)) +
   
-  # Arrows to depict ocean currents
-  geom_curve(aes(x = 155, y = -10, xend = 155, yend = -40),
-             col = "red",
-             curvature = -0.5,
-             arrow = arrow(type = "closed", length = unit(0.2, "inches")),
-             lineend = "round",
-             linewidth = 2) + # EAC
-  
-  geom_curve(aes(x = 120, y = -41, xend = 140, yend = -41),
-             col = "blue",
-             curvature = -0.3,
-             arrow = arrow(type = "closed", length = unit(0.2, "inches")),
-             lineend = "round",
-             linewidth = 1) +
-  
-  # labels
-  geom_text(aes(x = 165, y = -25, label = "EAC"), fontface = "bold") +
-  geom_text(aes(x = 130, y = -40, label = "LZC"), fontface = "bold") +
-  
   # regional divisions
-  geom_segment(aes(x = 114, y = -23, xend = 110, yend = -23), linewidth = 2) +
-  geom_spoke(aes(x = 120, y = -34), angle = -90, radius = 11, linewidth = 2) +
-  geom_segment(aes(x = 150, y = -23, xend = 160, yend = -23), linewidth = 2) +
-  geom_curve(aes(x = 143, y = -44, xend = 150, yend = -44), curvature = -1.4, angle = 95, linewidth = 2) +
+  geom_spoke(aes(x = 115, y = -21.5, angle = 90, radius = 11), linewidth = 1) +
+  geom_spoke(aes(x = 120, y = -34), angle = -90, radius = 11, linewidth = 1) +
+  geom_segment(aes(x = 153, y = -26, xend = 160, yend = -26), linewidth = 1) +
+  geom_curve(aes(x = 143, y = -44, xend = 150, yend = -44), curvature = -1.4, angle = 95, linewidth = 1) +
   
   # labels
-  geom_text(aes(x = 115, y = -10, label = "NA"), fontface = "bold") +
-  geom_text(aes(x = 111, y = -32, label = "WA"), fontface = "bold") +
-  geom_text(aes(x = 130, y = -35, label = "SA"), fontface = "bold") +
-  geom_text(aes(x = 157, y = -35, label = "SE"), fontface = "bold") +
-  geom_text(aes(x = 140, y = -43, label = "TAS"), fontface = "bold") +
+  geom_text(aes(x = 115, y = -10, label = "a"), fontface = "bold") +
+  geom_text(aes(x = 111, y = -32, label = "b"), fontface = "bold") +
+  geom_text(aes(x = 130, y = -35, label = "c"), fontface = "bold") +
+  geom_text(aes(x = 157, y = -35, label = "d"), fontface = "bold") +
+  geom_text(aes(x = 140, y = -43, label = "e"), fontface = "bold") +
   
   # adjust axes labels
   scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 165), label = paste0(seq(110, 160, by = 10), "°E")) +
   scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
   labs(fill = "dSST per decade (°C)", x = NULL, y = NULL, colour = NULL) +
   theme_bw() +
-  theme(legend.position = "bottom", legend.direction = "horizontal")  
+  theme(legend.position = "bottom", legend.direction = "horizontal") 
 
 # Regional means
 rls_means_region <- rls_summary[, 
@@ -829,17 +1125,6 @@ rls_means_region <- rls_summary[,
                                   dLat_se = sd(dLat) / sqrt(NROW(dLat))),
                                 by = .(limit, guild, region)]
 
-rls_means_region_plot <- ggplot(rls_means_region,
-                                aes(x = class, y = dLat_mean, col = guild)) +
-  geom_point(position = position_dodge(width = 0.3)) +
-  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                    ymax = dLat_mean + dLat_se),
-                width = 0.2, position = position_dodge(width = 0.3)) +
-  geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(limit ~ region) +
-  labs(y = "Mean changes in latitudinal limits (° latitude)") +
-  theme_bw() +
-  guides(colour = "none")
 
 # Check if means are different to 0 using t-tests
 rls_ttest <- rls_summary[rls_means_region[, .(N), by = .(region, limit, guild)], on = .(region, limit, guild)][N > 10][, .(p.val = t.test(dLat, mu = 0)$p.val), by = .(region, limit, guild)]
@@ -850,6 +1135,36 @@ rls_ttest$p.value.bonf.adjust <- p.adjust(rls_ttest$p.val, method = 'bonferroni'
 rls_ttest$p.value.holm.adjust <- p.adjust(rls_ttest$p.val, method = 'holm')
 rls_ttest$p.value.bh.adjust <- p.adjust(rls_ttest$p.val, method = 'BH')
 
+# Mark significant means on dataset
+rls_means_region <- rls_means_region[rls_ttest[, .(Signif), by = .(limit, guild, region)], on = .(limit, guild, region)]
+
+# Plot
+rls_means_region_plot <- 
+  ggplot(rls_means_region[N > 10],
+         aes(x = region, y = dLat_mean, col = guild)) +
+  geom_point(position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                    ymax = dLat_mean + dLat_se),
+                width = 0.2, position = position_dodge(width = 0.3)) +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  geom_text(aes(label = paste("N =", N)),
+              size = 4, 
+              hjust = 1.3,
+              col = "black") +
+  geom_text(label = ifelse(rls_means_region$Signif == TRUE, "*", ""), 
+            col = "black",
+            size = 5, 
+            hjust = 0.9, vjust = -1.2) +
+  facet_grid(limit ~.) +
+  labs(y = "Mean changes in latitudinal limits (° latitude)") +
+  ylim(c(-1.2, 1.6)) +
+  theme_bw() +
+  theme(axis.title.x = element_blank()) +
+  guides(colour = "none") 
+
+
+
+
 # Set guild color scheme
 guild_cols <- c(tropical = "#F8766D",
                 temperate = "#00BFC4")
@@ -858,18 +1173,15 @@ rls_summary <- rls_summary[, N:= .N, by = .(limit, guild, region)]
 
 library(cowplot)
 
-# Load necessary libraries
-library(cowplot)
-
 significant_guilds <- data.frame(
-  region = c("NA", "WA", "TAS"),
+  region = c("N", "SW", "TAS"),
   limit = c("southern", "southern", "southern"),
   guild = c("tropical", "tropical", "temperate"),
   y_pos = c(-0.4, 0.4, 0.2),
   label = c("*", "*", "*")
 )
 
-regions <- c("NA", "WA", "SA", "SE", "TAS")
+regions <- c("N", "SW", "S", "SE", "TAS")
 # Create a list to store the final plots for each region
 region_plots <- list()
 
@@ -891,8 +1203,8 @@ for (i in 1:length(regions)) {
     geom_hline(yintercept = 0, lty = "dashed") +
     facet_grid(limit ~ .) +
     labs(y = "", x = "", subtitle = ifelse(regions[i] == "NA", "a", 
-                                           ifelse(regions[i] == "WA", "b",
-                                                  ifelse(regions[i] == "SA", "c",
+                                           ifelse(regions[i] == "S", "b",
+                                                  ifelse(regions[i] == "S", "c",
                                                          ifelse(regions[i] == "SE", "d", "e"))))) +
     guides(colour = "none") +
     theme_bw() +
@@ -1628,15 +1940,6 @@ dLatS_plot <- ggplot() +
 ggarrange(dLatN_plot, dLatS_plot,
           nrow = 1, ncol = 2)
 
-```
-##### Barplot with proportions
-```{r}
-ggplot(rls_summary[abs(dLat) > 0.5], aes(x = guild,  fill = limit)) +
-  geom_bar(position = "dodge") +
-  labs(x = "") +
-  theme_bw()
-
-chisq.test(table(rls_summary$guild, rls_summary$limit))
 ```
 
 
