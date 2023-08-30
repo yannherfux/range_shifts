@@ -26,7 +26,7 @@ Remember to set working directory
 ```{r Load packages, message=FALSE, warning=FALSE}
 rm(list = ls()) # clear environment memory
 
-dir <- "C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R"
+dir <- "C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/chapter1"
 setwd(dir)
 
 # Data wrangling
@@ -43,13 +43,13 @@ library(DT) # for online data.table manipulation
 *Input data*
 ```{r Reading raw data, message=FALSE}
 # RLS dataset
-rls.raw <- fread(paste0(dir, "/Raw Data/ep_m1_m2_AUS.csv")) #nrows = 1,634,614
+rls.raw <- fread("../Raw Data/ep_m1_m2_AUS.csv") #nrows = 1,634,614
 
 # Species traits dataset (for extracting guild information)
-traits <- fread(paste0(dir, "/Raw Data/TRAITS MASTER.csv")) #nrows = 5,188
+traits <- fread("../Raw Data/TRAITS MASTER.csv") #nrows = 5,188
 
 # RLS survey ID sea-surface temperature dataset (Conor's method)
-sst_data <- fread(paste0(dir, "/Raw Data/rls_sites_sst2.csv")) #nrows = 54,973
+sst_data <- fread("../Raw Data/rls_sites_sst2.csv") #nrows = 54,973
 ```
 
 ***
@@ -565,7 +565,7 @@ errors <- c("Atypichthys strigatus", "Cheilodipterus quinquelineatus", "Chelmono
 rls_summary <- rls_summary[!which(taxon %in% errors)] #nrow = 1,846
 
 # Save dataset for corrections and checking of species limits
-write.csv(rls_summary[order(taxon)], paste0(dir, "/chapter1/rls_summary.csv"), row.names = FALSE)
+write.csv(rls_summary[order(taxon)], "rls_summary.csv", row.names = FALSE)
 ```
 
 #### Plots
@@ -607,11 +607,121 @@ rls_summary <- rls_summary[, ':=' (guild = factor(guild, levels = c("tropical", 
                                    limit = factor(limit, levels = c("northern", "southern")))]
 ```
 
-##### Intorductory figure
+##### Introductory figure
 ```{r}
 library(patchwork)
 library(cowplot)
 library(ggpubr)
+
+
+#### ---- Decadal SST map
+library(sf) # processing spatial vector data
+library(raster) # manipulating rasters
+library(terra) # spatial data analysis
+library(gstat) # producing inverse distance weighted means
+
+site_sst <- fread("../Raw Data/site_sst_yearly.csv") #nrows = 12,570
+
+# Add coordinates
+site_sst <- site_sst[rls[, .(latitude = unique(latitude), longitude = unique(longitude)), by = .(site_code)], on = .(site_code), nomatch = NULL]
+
+# Linear regression to obtain mean SST change throughout the decade
+site_sst <- site_sst[, .(sst_lm = list(lm(mean_sst ~ year)),
+                           year_i = min(year),
+                           year_f = max(year),
+                           latitude = mean(latitude),
+                           longitude = mean(longitude)),
+                       by = .(site_code)]
+
+# Extract sst_t1, sst_t2 and dSST
+site_sst <- site_sst[, ':=' (sst_t1 = sst_lm[[1]]$coefficients["(Intercept)"] + sst_lm[[1]]$coefficients["year"] * year_i,
+                               sst_t2 = sst_lm[[1]]$coefficients["(Intercept)"] + sst_lm[[1]]$coefficients["year"] * year_f,
+                               dSST = sst_lm[[1]]$coefficients["year"]),
+                       by = .(site_code)]
+
+#rls_sites <- rls_sites[, dSST:= sst_t2 - sst_t1, by = .(site_code)]
+
+
+# Create simple features objects and a spatial grid for interpolation
+aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
+crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
+aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
+
+rls_sites_sf <- st_as_sf(site_sst, coords = c("longitude", "latitude"), crs = crs(aus_pols))
+
+grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
+  st_as_sfc() %>% 
+  st_make_grid(
+    cellsize = c(1, 1), # 1 degree cell size
+    what = "centers"
+  ) %>%
+  st_as_sf() %>%
+  cbind(., st_coordinates(.)) %>% 
+  st_drop_geometry() %>% 
+  mutate(Z = 0) %>%
+  raster::rasterFromXYZ( # Convert to raster object
+    crs = crs(aus_pols)
+  )
+
+# Fit an inverse distance weighted mean model
+fit_IDW <- gstat::gstat(
+  formula = dSST ~ 1,
+  maxdist = 220, vdist = T, #radius of 2 degrees
+  data = as(rls_sites_sf, "Spatial")
+)
+
+# Make sure data and new data have same CRS
+crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
+
+# Interpolate
+interp_IDW <- interpolate(grd, fit_IDW) 
+
+# Convert raster to points
+pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
+colnames(pnts) <- c("lon", "lat", "dSST")
+pnts$dSST <- pnts$dSST * 10 # convert units to dSST/decade
+
+# Plot
+aus_map <- ggplot() +
+  
+  # Rasters
+  geom_raster(data= pnts, aes(lon, lat, fill = dSST)) + # dSST
+  geom_sf(data = st_union(aus_sf)) + # Continent polygon
+  
+  # sites included in analysis
+  geom_point(data = rls_sites, 
+             aes(x = longitude, y = latitude),
+             shape = 1, col = "black", size = 3) +
+  
+  # manual color scale
+  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
+                       midpoint = 0,
+                       breaks = seq(-0.2, 0.7, 0.2),
+                       limits = c(-0.2, 0.7)) +
+  
+  # regional divisions
+  geom_spoke(aes(x = 115, y = -21.5, angle = 90, radius = 11), linewidth = 1) +
+  geom_spoke(aes(x = 120, y = -34), angle = -90, radius = 11, linewidth = 1) +
+  geom_segment(aes(x = 153, y = -26, xend = 160, yend = -26), linewidth = 1) +
+  geom_curve(aes(x = 143, y = -44, xend = 150, yend = -44), curvature = -1.4, angle = 95, linewidth = 1) +
+  
+  # labels
+  geom_text(aes(x = 115, y = -10, label = "a"), fontface = "bold") +
+  geom_text(aes(x = 111, y = -32, label = "b"), fontface = "bold") +
+  geom_text(aes(x = 130, y = -35, label = "c"), fontface = "bold") +
+  geom_text(aes(x = 157, y = -35, label = "d"), fontface = "bold") +
+  geom_text(aes(x = 140, y = -43, label = "e"), fontface = "bold") +
+  
+  # adjust axes labels
+  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 165), label = paste0(seq(110, 160, by = 10), "°E")) +
+  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
+  labs(fill = "dSST per decade (°C)", x = NULL, y = NULL, colour = NULL) +
+  theme_bw() +
+  theme(legend.position = "bottom", legend.direction = "horizontal") 
+
+
+
+####---- Histograms
 
 # Set guild color scheme
 guild_cols <- c(tropical = "#F8766D",
@@ -703,11 +813,20 @@ for(i in rls_summary[, unique(region)]){
   region_plots[[i]] <- p3 
 }
 
+
+
+
+#### ---- Main figure
+
 # Collate next to aus_map
-ggarrange(aus_map, wrap_plots(region_plots[c(5, 4, 1, 2, 3)]), ncol = 2, widths = c(0.3, 1))
+intro_plot <-
+  ggarrange(aus_map, 
+            wrap_plots(region_plots[c(5, 4, 1, 2, 3)]), 
+            ncol = 2, widths = c(0.3, 1))
 
 # Collate around aus_map
-plot_grid(region_plots$SW, region_plots$N, region_plots$SE,
+intro_plot2 <- 
+  plot_grid(region_plots$SW, region_plots$N, region_plots$SE,
           region_plots$S, aus_map, region_plots$TAS,
           ncol = 3, nrow = 2,
           widths = c(0.8, 0.8, 0.8,
@@ -715,6 +834,19 @@ plot_grid(region_plots$SW, region_plots$N, region_plots$SE,
           heights = c(0.3, 0.3, 0.3,
                       0.3, 1, 0.3))
 
+# Collate next to aus_map
+top_fig <- wrap_plots(region_plots[c(5, 1, 3)])
+bottom_fig <- wrap_plots(region_plots[c(4, 2)]) + aus_map
+
+intro_plot <-
+  top_fig + bottom_fig +
+  plot_layout(nrow = 2)
+            
+
+ggsave(plot = intro_plot, 
+       "/figures/intro_plot.png", device = "png", 
+       width = 180,  units = "mm", 
+       dpi = 300)
 ```
 
 ##### Summary Plots
@@ -789,7 +921,8 @@ for(j in unique(rls_summary$guild)){
                            guild = j, 
                            model = list(M_limit),
                            AIC = LRT_limit[2, ]$AIC, 
-                           RSS = LRT_limit[2, ]$RSS, 
+                           RSS = LRT_limit[2, ]$RSS,
+                           slope = M_limit$coefficients["dSST"],
                            p.val = LRT_limit[2, ]$`Pr(>Chi)`, 
                            response = 'raw')
     
