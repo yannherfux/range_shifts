@@ -691,7 +691,7 @@ aus_map <- ggplot() +
   # sites included in analysis
   geom_point(data = rls_sites, 
              aes(x = longitude, y = latitude),
-             shape = 1, col = "black", size = 3) +
+             shape = 1, col = "black", size = 1) +
   
   # manual color scale
   scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
@@ -717,7 +717,8 @@ aus_map <- ggplot() +
   scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
   labs(fill = "dSST per decade (°C)", x = NULL, y = NULL, colour = NULL) +
   theme_bw() +
-  theme(legend.position = "bottom", legend.direction = "horizontal") 
+  theme(legend.position = "bottom", 
+        legend.direction = "horizontal")
 
 
 
@@ -814,7 +815,70 @@ for(i in rls_summary[, unique(region)]){
 }
 
 
+####---- Histograms with no gradients
 
+# Categorize shifts and subset data used for plots
+rls_summary[, dir:= ifelse(dLat > 1, "north", 
+                           ifelse(dLat < -1, "south",
+                                  "static"))]
+
+
+region_plots <- list()
+for(i in rls_summary[, unique(region)]){
+  
+  # Subset data
+  data_p1 <- rls_summary[dir != "static" & region == i]
+  data_p1[, N:= .N, by = .(limit)]
+  
+  ## Create histogram
+  p1 <- ggplot(data_p1[N > 3],
+               aes(y = lat1, fill = dir)) + 
+    geom_histogram(binwidth = 2, boundary = 1, position = "dodge") +
+    #scale_fill_manual(values = c("gray31", "grey59")) +
+    scale_fill_manual(values = c("black", "purple")) +
+    ylim(-44, -9) +
+    facet_grid(limit ~.) +
+    labs(x = "", y = "Latitude", subtitle = ifelse(i == "N", "a",
+                                                   ifelse(i == "SW", "b",
+                                                          ifelse(i == "S", "c", 
+                                                                 ifelse(i == "SE", "d", "e"))))) +
+    theme_bw() +
+    theme(panel.grid = element_blank()) +
+    guides(fill = "none")
+  
+  # Add to list of region plots
+  region_plots[[i]] <- p1 
+}
+
+
+
+
+region_plots <- list()
+
+for (i in unique(rls_summary$region)) {
+  
+  # Subset data
+  data_p1 <- rls_summary[dir != "static" & region == i]
+  data_p1[, N := .N, by = .(limit)]
+  
+  # Create a histogram with curved bars using geom_density
+  p1 <- ggplot(data_p1[N > 3],
+               aes(x = ..count.., y = lat1, fill = dir)) +
+    geom_density(alpha = 0.5) +  # Use geom_density
+    scale_fill_manual(values = c("black", "grey")) +
+    ylim(-44, -9) +
+    facet_grid(limit ~ .) +
+    labs(x = "No. Range Shifts", y = "Latitude", subtitle = ifelse(i == "N", "a",
+                                                   ifelse(i == "SW", "b",
+                                                          ifelse(i == "S", "c", 
+                                                                 ifelse(i == "SE", "d", "e"))))) +
+    theme_bw() +
+    theme(panel.grid = element_blank()) +
+    guides(fill = "none")
+  
+  # Add to list of region plots
+  region_plots[[i]] <- p1 
+}
 
 #### ---- Main figure
 
@@ -825,14 +889,28 @@ intro_plot <-
             ncol = 2, widths = c(0.3, 1))
 
 # Collate around aus_map
-intro_plot2 <- 
-  plot_grid(region_plots$SW, region_plots$N, region_plots$SE,
-          region_plots$S, aus_map, region_plots$TAS,
-          ncol = 3, nrow = 2,
-          widths = c(0.8, 0.8, 0.8,
-                     0.8, 0.3, 0.8),
-          heights = c(0.3, 0.3, 0.3,
-                      0.3, 1, 0.3))
+intro_plot2 <-
+  plot_grid(
+    # Left hand side
+    plot_grid(region_plots$N, 
+            region_plots$SW,
+            ncol = 1, nrow = 2),
+    # Middle
+    plot_grid(aus_map, 
+              plot_grid(NULL, region_plots$TAS, NULL,
+                        nrow = 1, ncol = 3,
+                        rel_widths = c(0.5, 1, 0.5)),
+              nrow = 2, ncol = 1,
+              rel_heights = c(1, 0.4)),
+    # Right hand side
+    plot_grid(region_plots$S, 
+            region_plots$SE,
+            ncol = 1, nrow = 2),
+    nrow = 1, ncol = 3,
+    rel_widths = c(0.5, 1, 0.5),
+    plot_bg = "white"
+  )
+  
 
 # Collate next to aus_map
 top_fig <- wrap_plots(region_plots[c(5, 1, 3)])
@@ -843,8 +921,8 @@ intro_plot <-
   plot_layout(nrow = 2)
             
 
-ggsave(plot = intro_plot, 
-       "/figures/intro_plot.png", device = "png", 
+ggsave(plot = intro_plot2, 
+       paste0(dir, "/figures/intro_plot.png"), device = "png", 
        width = 180,  units = "mm", 
        dpi = 300)
 ```
@@ -860,6 +938,7 @@ rls_summary_vp <- ggplot(rls_summary, aes(x = guild, y = dLat, fill = guild)) +
   facet_grid(limit ~., scales = 'free') +
   labs(y = "Changes in latitudinal limits (° latitude)", subtitle = "a", x = "") +
   theme_bw() +
+  theme(panel.grid = element_blank()) +
   guides(fill = "none")
 
 
@@ -884,6 +963,7 @@ rls_means_plot_wt <- ggplot(rls_means_wt,
   facet_grid(limit ~.) +
   labs(x = "", y = "Mean changes in latitudinal limits (° latitude)", subtitle = "b") +
   theme_bw() +
+  theme(panel.grid = element_blank()) +
   guides(colour = "none")
 
 # Regression
@@ -900,7 +980,8 @@ rls_summary_regression <- ggplot(rls_summary, aes(x = dSST, y = dLat, col = guil
             aes(x = -2.7, y = -15, label = "p = 0.05"),
             hjust = 0, vjust = -1, color = "black") +
   theme_bw() +
-  theme(strip.text.x = element_blank()) +
+  theme(strip.text.x = element_blank(),
+        panel.grid = element_blank()) +
   guides(colour = "none")
 
 limits <- c("northern", "southern")
@@ -933,10 +1014,16 @@ for(j in unique(rls_summary$guild)){
 
 # Both tropical trends are significant -> evidence that northern limit is highly significant
 
-ggarrange(ggarrange(rls_summary_vp, rls_means_plot_wt,
+summary_plot <- 
+  ggarrange(ggarrange(rls_summary_vp, rls_means_plot_wt,
                     nrow = 1),
           rls_summary_regression,
           nrow = 2)
+
+ggsave(plot = summary_plot, 
+       paste0(dir, "/figures/summary_plot.png"), device = "png", 
+       width = 180,  units = "mm", 
+       dpi = 300)
 ```
 
 
@@ -1292,11 +1379,14 @@ rls_means_region_plot <-
   labs(y = "Mean changes in latitudinal limits (° latitude)") +
   ylim(c(-1.2, 1.6)) +
   theme_bw() +
-  theme(axis.title.x = element_blank()) +
+  theme(axis.title.x = element_blank(),
+        panel.grid = element_blank()) +
   guides(colour = "none") 
 
-
-
+ggsave(plot = rls_means_region_plot, 
+       paste0(dir, "/figures/rls_means_region_plot.png"), device = "png", 
+       width = 180,  units = "mm", 
+       dpi = 300)
 
 # Set guild color scheme
 guild_cols <- c(tropical = "#F8766D",
@@ -1478,6 +1568,39 @@ plot_grid(
 )
 
 ```
+
+##### Temperature time series for anomalous sites
+```{r}
+anom_sites <- rls.raw[location %in% c("Ningaloo Reef", "Shark Bay", "Solitary Islands", "Lord Howe Island")][, .(site_code = unique(site_code)), by = .(location)][site_sst, on= .(site_code), nomatch = NULL] 
+
+anom_sites <- anom_sites[!is.na(mean_sst)] 
+
+anom_sites <- anom_sites[rls[, .(year_i = unique(year_i), year_f = unique(year_f)), by = .(site_code)], on = .(site_code), nomatch = NULL]
+
+anom_sites <- anom_sites[, ':=' (year_i = mean(year_i), 
+                                 year_f = mean(year_f)), 
+                         by = .(location)]
+
+anom_sites$location <- factor(anom_sites$location, levels = c("Ningaloo Reef", "Solitary Islands", "Shark Bay", "Lord Howe Island"))
+
+anom_sites_plot <- 
+  ggplot(anom_sites, 
+       aes(x = year, y = mean_sst, col = site_code)) + 
+  geom_line() + 
+  geom_vline(aes(xintercept = year_i), lty = "dashed") +
+  geom_vline(aes(xintercept = year_f), lty = "dashed") +
+  facet_wrap(vars(location)) +
+  labs(y = "Average temperature (°C)", x = "") +
+  theme_bw() +
+  theme(panel.grid = element_blank()) +
+  guides(col = "none")
+  
+ggsave(plot = anom_sites_plot, 
+       "/figures/anom_sites_plot.png", device = "png", 
+       width = 180,  units = "mm", 
+       dpi = 300)
+```
+
 
 ##### TAS invert plot
 ```{r}
