@@ -1026,317 +1026,8 @@ ggsave(plot = summary_plot,
        dpi = 300)
 ```
 
-
-
-##### Temperature maps
-```{r}
-#### ----- Temperature maps
-library(sf) # processing spatial vector data
-library(raster) # manipulating rasters
-library(terra) # spatial data analysis
-library(gstat) # producing inverse distance weighted means
-
-## Decadal temperature change
-site_sst <- fread(paste0(dir, "/Raw Data/site_sst_yearly.csv")) #nrows = 12,570
-
-# Add coordinates
-site_sst <- site_sst[rls[, .(latitude = unique(latitude), longitude = unique(longitude)), by = .(site_code)], on = .(site_code), nomatch = NULL]
-
-# Linear regression to obtain mean SST change throughout the decade
-site_sst <- site_sst[, .(sst_lm = list(lm(mean_sst ~ year)),
-                           year_i = min(year),
-                           year_f = max(year),
-                           latitude = mean(latitude),
-                           longitude = mean(longitude)),
-                       by = .(site_code)]
-
-# Extract sst_t1, sst_t2 and dSST
-site_sst <- site_sst[, ':=' (sst_t1 = sst_lm[[1]]$coefficients["(Intercept)"] + sst_lm[[1]]$coefficients["year"] * year_i,
-                               sst_t2 = sst_lm[[1]]$coefficients["(Intercept)"] + sst_lm[[1]]$coefficients["year"] * year_f,
-                               dSST = sst_lm[[1]]$coefficients["year"]),
-                       by = .(site_code)]
-
-# Create simple features objects and a spatial grid for interpolation
-aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
-crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
-aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
-
-rls_sites_sf <- st_as_sf(site_sst, coords = c("longitude", "latitude"), crs = crs(aus_pols))
-
-grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
-  st_as_sfc() %>% 
-  st_make_grid(
-    cellsize = c(1, 1), # 1 degree cell size
-    what = "centers"
-  ) %>%
-  st_as_sf() %>%
-  cbind(., st_coordinates(.)) %>% 
-  st_drop_geometry() %>% 
-  mutate(Z = 0) %>%
-  raster::rasterFromXYZ( # Convert to raster object
-    crs = crs(aus_pols)
-  )
-
-# Fit an inverse distance weighted mean model
-fit_IDW <- gstat::gstat(
-  formula = dSST ~ 1,
-  maxdist = 220, vdist = T, #radius of 2 degrees
-  data = as(rls_sites_sf, "Spatial")
-)
-
-# Make sure data and new data have same CRS
-crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
-
-# Interpolate
-interp_IDW <- interpolate(grd, fit_IDW) 
-
-# Convert raster to points
-pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
-colnames(pnts) <- c("lon", "lat", "dSST")
-pnts$dSST <- pnts$dSST * 10 # convert units to dSST/decade
-
-# Plot
-aus_map <- ggplot() +
-  
-  # Rasters
-  geom_raster(data= pnts, aes(lon, lat, fill = dSST)) + # dSST
-  geom_sf(data = st_union(aus_sf)) + # Continent polygon
-  
-  # sites included in analysis
-  geom_point(data = rls_sites, 
-             aes(x = longitude, y = latitude),
-             shape = 1, col = "black", size = 3) +
-  
-  # manual color scale
-  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
-                       midpoint = 0,
-                       breaks = seq(-0.2, 0.7, 0.2),
-                       limits = c(-0.2, 0.7)) +
-  
-  # regional divisions
-  geom_spoke(aes(x = 115, y = -21.5, angle = 90, radius = 11), linewidth = 1) +
-  geom_spoke(aes(x = 120, y = -34), angle = -90, radius = 11, linewidth = 1) +
-  geom_segment(aes(x = 153, y = -26, xend = 160, yend = -26), linewidth = 1) +
-  geom_curve(aes(x = 143, y = -44, xend = 150, yend = -44), curvature = -1.4, angle = 95, linewidth = 1) +
-  
-  # labels
-  geom_text(aes(x = 115, y = -10, label = "N"), fontface = "bold") +
-  geom_text(aes(x = 111, y = -32, label = "SW"), fontface = "bold") +
-  geom_text(aes(x = 130, y = -35, label = "S"), fontface = "bold") +
-  geom_text(aes(x = 157, y = -35, label = "SE"), fontface = "bold") +
-  geom_text(aes(x = 140, y = -43, label = "TAS"), fontface = "bold") +
-  
-  # adjust axes labels
-  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 165), label = paste0(seq(110, 160, by = 10), "°E")) +
-  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
-  labs(fill = "dSST per decade (°C)", x = NULL, y = NULL, colour = NULL) +
-  theme_bw() +
-  theme(legend.position = "bottom", legend.direction = "horizontal") 
-
-## Site-level temperature change
-
-rls_sites_sf <- st_as_sf(rls_summary[rls_summary[, .(dSST), by = .(site1, longitude, latitude)][, .N, by = .(site1)], on = .(site1)][N > 2][, .(dSST = mean(dSST)), by = .(site1, longitude, latitude)], coords = c("longitude", "latitude"), crs = crs(aus_pols))
-
-grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
-  st_as_sfc() %>% 
-  st_make_grid(
-    cellsize = c(1, 1), # 1 degree cell size
-    what = "centers"
-  ) %>%
-  st_as_sf() %>%
-  cbind(., st_coordinates(.)) %>% 
-  st_drop_geometry() %>% 
-  mutate(Z = 0) %>%
-  raster::rasterFromXYZ( # Convert to raster object
-    crs = crs(aus_pols)
-  )
-
-# Fit an inverse distance weighted mean model
-fit_IDW <- gstat::gstat(
-  formula = dSST ~ 1,
-  maxdist = 220, vdist = T, #radius of 2 degrees
-  data = as(rls_sites_sf, "Spatial")
-)
-
-# Make sure data and new data have same CRS
-crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
-
-# Interpolate
-interp_IDW <- interpolate(grd, fit_IDW) 
-
-# Convert raster to points
-pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
-colnames(pnts) <- c("lon", "lat", "dSST")
-
-# Plot
-site_level_heatmap <- ggplot() +
-  
-  # Rasters
-  geom_raster(data= pnts, aes(lon, lat, fill = dSST)) + # dSST
-  geom_sf(data = st_union(aus_sf)) + # Continent polygon
-  
-  # sites included in analysis
-  geom_point(data = rls_summary, 
-             aes(x = longitude, y = latitude),
-             shape = 1, col = "black", size = 3) +
-  
-  # manual color scale
-  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
-                       midpoint = 0,
-                       breaks = seq(-2.3, 2, 0.8),
-                       limits = c(-2.3, 2)) +
-  
-  # regional divisions
-  geom_spoke(aes(x = 115, y = -21.5, angle = 90, radius = 11), linewidth = 1) +
-  geom_spoke(aes(x = 120, y = -34), angle = -90, radius = 11, linewidth = 1) +
-  geom_segment(aes(x = 153, y = -26, xend = 160, yend = -26), linewidth = 1) +
-  geom_curve(aes(x = 143, y = -44, xend = 150, yend = -44), curvature = -1.4, angle = 95, linewidth = 1) +
-  
-  # labels
-  geom_text(aes(x = 115, y = -10, label = "N"), fontface = "bold") +
-  geom_text(aes(x = 111, y = -32, label = "SW"), fontface = "bold") +
-  geom_text(aes(x = 130, y = -35, label = "S"), fontface = "bold") +
-  geom_text(aes(x = 157, y = -35, label = "SE"), fontface = "bold") +
-  geom_text(aes(x = 140, y = -43, label = "TAS"), fontface = "bold") +
-  
-  # adjust axes labels
-  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 160), label = paste0(seq(110, 160, by = 10), "°E")) +
-  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
-  labs(fill = "dSST (°C)", x = NULL, y = NULL) +
-  theme_bw() +
-  theme(legend.position = "bottom", legend.direction = "horizontal")
-
-# Bar plots with proportions
-rls_barplot <- rls_summary
-rls_barplot[, move:= ifelse(abs(dLat) > 1 & limit == "northern",
-                            "northern moving",
-                            ifelse(abs(dLat) > 1 & limit == "southern",
-                                   "southern moving", "static"))]
-
-limit_barplot <- ggplot(rls_barplot, aes(x = region,  fill = move)) +
-  geom_bar(position = "dodge") +
-  labs(x = "") +
-  facet_wrap(guild ~.) +
-  theme_bw() +
-  guides(fill = "none")
-
-# Collate plots
-library(ggpubr)
-
-ggarrange(ggarrange(aus_map, site_level_heatmap,
-                    nrow = 1),
-          limit_barplot,
-          nrow = 2)
-```
-
-
-
 ##### Regional map with means
 ```{r}
-library(sf) # processing spatial vector data
-library(raster) # manipulating rasters
-library(terra) # spatial data analysis
-library(gstat) # producing inverse distance weighted means
-
-site_sst <- fread(paste0(dir, "/Raw Data/site_sst_yearly.csv")) #nrows = 12,570
-
-# Add coordinates
-site_sst <- site_sst[rls[, .(latitude = unique(latitude), longitude = unique(longitude)), by = .(site_code)], on = .(site_code), nomatch = NULL]
-
-# Linear regression to obtain mean SST change throughout the decade
-site_sst <- site_sst[, .(sst_lm = list(lm(mean_sst ~ year)),
-                           year_i = min(year),
-                           year_f = max(year),
-                           latitude = mean(latitude),
-                           longitude = mean(longitude)),
-                       by = .(site_code)]
-
-# Extract sst_t1, sst_t2 and dSST
-site_sst <- site_sst[, ':=' (sst_t1 = sst_lm[[1]]$coefficients["(Intercept)"] + sst_lm[[1]]$coefficients["year"] * year_i,
-                               sst_t2 = sst_lm[[1]]$coefficients["(Intercept)"] + sst_lm[[1]]$coefficients["year"] * year_f,
-                               dSST = sst_lm[[1]]$coefficients["year"]),
-                       by = .(site_code)]
-
-#rls_sites <- rls_sites[, dSST:= sst_t2 - sst_t1, by = .(site_code)]
-
-
-# Create simple features objects and a spatial grid for interpolation
-aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
-crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
-aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
-
-rls_sites_sf <- st_as_sf(site_sst, coords = c("longitude", "latitude"), crs = crs(aus_pols))
-
-grd <- st_bbox(c(xmin = 110, xmax = 160, ymin = -44, ymax = -7), crs = crs(aus_pols)) %>% 
-  st_as_sfc() %>% 
-  st_make_grid(
-    cellsize = c(1, 1), # 1 degree cell size
-    what = "centers"
-  ) %>%
-  st_as_sf() %>%
-  cbind(., st_coordinates(.)) %>% 
-  st_drop_geometry() %>% 
-  mutate(Z = 0) %>%
-  raster::rasterFromXYZ( # Convert to raster object
-    crs = crs(aus_pols)
-  )
-
-# Fit an inverse distance weighted mean model
-fit_IDW <- gstat::gstat(
-  formula = dSST ~ 1,
-  maxdist = 220, vdist = T, #radius of 2 degrees
-  data = as(rls_sites_sf, "Spatial")
-)
-
-# Make sure data and new data have same CRS
-crs(grd) <- "+proj=longlat +datum=WGS84 +no_defs"
-
-# Interpolate
-interp_IDW <- interpolate(grd, fit_IDW) 
-
-# Convert raster to points
-pnts <- rasterToPoints(interp_IDW) %>% as_tibble()
-colnames(pnts) <- c("lon", "lat", "dSST")
-pnts$dSST <- pnts$dSST * 10 # convert units to dSST/decade
-
-# Plot
-aus_map <- ggplot() +
-  
-  # Rasters
-  geom_raster(data= pnts, aes(lon, lat, fill = dSST)) + # dSST
-  geom_sf(data = st_union(aus_sf)) + # Continent polygon
-  
-  # sites included in analysis
-  geom_point(data = rls_sites, 
-             aes(x = longitude, y = latitude),
-             shape = 1, col = "black", size = 3) +
-  
-  # manual color scale
-  scale_fill_gradient2(low = "blue", mid = "grey", high = "red",
-                       midpoint = 0,
-                       breaks = seq(-0.2, 0.7, 0.2),
-                       limits = c(-0.2, 0.7)) +
-  
-  # regional divisions
-  geom_spoke(aes(x = 115, y = -21.5, angle = 90, radius = 11), linewidth = 1) +
-  geom_spoke(aes(x = 120, y = -34), angle = -90, radius = 11, linewidth = 1) +
-  geom_segment(aes(x = 153, y = -26, xend = 160, yend = -26), linewidth = 1) +
-  geom_curve(aes(x = 143, y = -44, xend = 150, yend = -44), curvature = -1.4, angle = 95, linewidth = 1) +
-  
-  # labels
-  geom_text(aes(x = 115, y = -10, label = "a"), fontface = "bold") +
-  geom_text(aes(x = 111, y = -32, label = "b"), fontface = "bold") +
-  geom_text(aes(x = 130, y = -35, label = "c"), fontface = "bold") +
-  geom_text(aes(x = 157, y = -35, label = "d"), fontface = "bold") +
-  geom_text(aes(x = 140, y = -43, label = "e"), fontface = "bold") +
-  
-  # adjust axes labels
-  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 165), label = paste0(seq(110, 160, by = 10), "°E")) +
-  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
-  labs(fill = "dSST per decade (°C)", x = NULL, y = NULL, colour = NULL) +
-  theme_bw() +
-  theme(legend.position = "bottom", legend.direction = "horizontal") 
-
 # Regional means
 rls_means_region <- rls_summary[, 
                                 .(N = NROW(dLat),
@@ -1358,216 +1049,51 @@ rls_ttest$p.value.bh.adjust <- p.adjust(rls_ttest$p.val, method = 'BH')
 # Mark significant means on dataset
 rls_means_region <- rls_means_region[rls_ttest[, .(Signif), by = .(limit, guild, region)], on = .(limit, guild, region)]
 
+# Set guild color scheme
+guild_cols <- c(tropical = "#F8766D",
+                temperate = "#00BFC4")
+
 # Plot
 rls_means_region_plot <- 
   ggplot(rls_means_region[N > 10],
          aes(x = region, y = dLat_mean, col = guild)) +
+  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = ifelse(rls_means_region$limit == "northern", -Inf, 0), ymax = ifelse(rls_means_region$limit == "northern", 0, Inf)), fill = "lightgrey", alpha = 0.3, col = NA) +
   geom_point(position = position_dodge(width = 0.3)) +
   geom_errorbar(aes(ymin = dLat_mean - dLat_se,
                     ymax = dLat_mean + dLat_se),
                 width = 0.2, position = position_dodge(width = 0.3)) +
   geom_hline(yintercept = 0, lty = "dashed") +
   geom_text(aes(label = paste("N =", N)),
-              size = 4, 
-              hjust = 1.3,
-              col = "black") +
+            size = 4, 
+            hjust = 1.3,
+            col = "black") +
   geom_text(label = ifelse(rls_means_region$Signif == TRUE, "*", ""), 
             col = "black",
             size = 5, 
             hjust = 0.9, vjust = -1.2) +
+  geom_text(aes(x = "TAS", y = 1),
+            label = ifelse(rls_means_region$limit == "northern", "extending", "contracting"), 
+            col = "black",
+            size = 5) +
+  geom_text(aes(x = "TAS", y = -1),
+            label = ifelse(rls_means_region$limit == "northern", "contracting", "extending"), 
+            col = "black",
+            size = 5) +
   facet_grid(limit ~.) +
   labs(y = "Mean changes in latitudinal limits (° latitude)") +
   ylim(c(-1.2, 1.6)) +
+  scale_color_manual(values = guild_cols) +
   theme_bw() +
   theme(axis.title.x = element_blank(),
         panel.grid = element_blank()) +
-  guides(colour = "none") 
+  guides(colour = "none")
 
 ggsave(plot = rls_means_region_plot, 
        paste0(dir, "/figures/rls_means_region_plot.png"), device = "png", 
        width = 180,  units = "mm", 
        dpi = 300)
-
-# Set guild color scheme
-guild_cols <- c(tropical = "#F8766D",
-                temperate = "#00BFC4")
-
-rls_summary <- rls_summary[, N:= .N, by = .(limit, guild, region)]
-
-library(cowplot)
-
-significant_guilds <- data.frame(
-  region = c("N", "SW", "TAS"),
-  limit = c("southern", "southern", "southern"),
-  guild = c("tropical", "tropical", "temperate"),
-  y_pos = c(-0.4, 0.4, 0.2),
-  label = c("*", "*", "*")
-)
-
-regions <- c("N", "SW", "S", "SE", "TAS")
-# Create a list to store the final plots for each region
-region_plots <- list()
-
-# Generate the final plot for each region
-for (i in 1:length(regions)) {
-  # Create dotplot plot; use means with more than 10 data points
-  current_data <- rls_means_region[region == regions[i] & N > 10]
-
-  p1 <- ggplot(current_data, aes(x = guild, y = dLat_mean, col = guild)) +
-    geom_point(position = position_dodge(width = 0.3)) +
-    geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                      ymax = dLat_mean + dLat_se),
-                  width = 0.2, position = position_dodge(width = 0.3)) +
-    scale_color_manual(values = guild_cols) + 
-    geom_text(aes(label = paste("N =", N)),
-              size = 4, 
-              hjust = 1.3,
-              col = "black") +
-    geom_hline(yintercept = 0, lty = "dashed") +
-    facet_grid(limit ~ .) +
-    labs(y = "", x = "", subtitle = ifelse(regions[i] == "NA", "a", 
-                                           ifelse(regions[i] == "S", "b",
-                                                  ifelse(regions[i] == "S", "c",
-                                                         ifelse(regions[i] == "SE", "d", "e"))))) +
-    guides(colour = "none") +
-    theme_bw() +
-    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
-  
-  # Filter the significant guilds for the current region and limit
-  current_significant_guilds <- significant_guilds[significant_guilds$region == regions[i] &
-                                                    significant_guilds$limit == "southern", ]
-  
-  # Add asterisks to the plot for significant guilds
-  p1 <- p1 +
-    geom_text(data = current_significant_guilds,
-              aes(x = guild, y = y_pos, label = label),
-              color = "black")
-
-  # Store the final plot for the current region
-  region_plots[[regions[i]]] <- p1
-}
-
-# Create figure with map and dot plots
-plot_grid(
-  plot_grid(NULL, region_plots$WA, region_plots$SA, ncol = 1),
-  plot_grid(region_plots$`NA`, NULL, aus_map, ncol = 1, 
-            rel_heights = c(1, 0, 2),
-            rel_widths = c(1, 0, 2)),
-  plot_grid(NULL, region_plots$SE, region_plots$TAS, ncol = 1),
-  ncol = 3
-)
-
-
-#### ---- USE CODE BELOW TO ADD DOT PLOTS AND REGRESSIONS INTO ONE FIGURE
-
-regions <- c("NA", "WA", "SA", "SE", "TAS")
-# Create a list to store the final plots for each region
-region_plots <- list()
-
-# Generate the final plot for each region
-for (i in 1:length(regions)) {
-  
-  # Create regression plot
-  p1 <- ggplot(rls_summary[N > 30 & region == regions[i]], 
-                          aes(x = dSST, y = dLat, col = guild)) +
-    geom_smooth(method = "glm") + 
-    geom_hline(yintercept = 0, lty = "dashed") +
-    scale_color_manual(values = guild_cols) +
-    facet_grid(limit ~ .) +
-    theme_bw() +
-    guides(colour = "none") +
-    theme(strip.text = element_blank())
-
-  # Create dotplot plot; use means with more than 10 data points
-  p2 <- ggplot(rls_means_region[region == regions[i] & N > 10], 
-                       aes(x = guild, y = dLat_mean, col = guild)) +
-    geom_point(position = position_dodge(width = 0.3)) +
-    geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                      ymax = dLat_mean + dLat_se),
-                  width = 0.2, position = position_dodge(width = 0.3)) +
-    scale_color_manual(values = guild_cols) + 
-    geom_text(aes(label = paste("N =", N)),
-              size = 4, 
-              hjust = 1.3,
-              col = "black") +
-    geom_hline(yintercept = 0, lty = "dashed") +
-    facet_grid(limit ~ .) +
-    labs(y = "", X = "") +
-    guides(colour = "none") +
-    theme_bw() +
-    theme(axis.text.y = element_blank())
-
-  # Combine the two plots using cowplot
-  p3 <- plot_grid(p1, p2,
-                       labels = ifelse(regions[i] == "NA", "a",
-                                       ifelse(regions[i] == "WA", "b",
-                                              ifelse(regions[i] == "SA", "c", 
-                                                     ifelse(regions[i] == "SE", "d", "e")))),
-                       ncol = 2,
-                       align = "h",
-                       axis = "lr",
-                       rel_widths = c(2, 1))
-
-  # Store the final plot for the current region
-  region_plots[[regions[i]]] <- p3
-}
-
-# Add TAS plots
-p1 <- ggplot(rls_summary[limit == "southern" & region == "TAS"], 
-             aes(x = dSST, y = dLat, col = guild)) +
-  geom_smooth(method = "glm") + 
-  geom_hline(yintercept = 0, lty = "dashed") +
-  scale_color_manual(values = guild_cols) +
-  facet_grid(limit ~ class) +
-  theme_bw() +
-  guides(colour = "none") +
-  theme(strip.text.y = element_blank())
-
-# Create dotplot plot
-p2 <- ggplot(rls_summary[region == "TAS" & limit == "southern", 
-                         .(N = NROW(dLat),
-                           dLat_mean = mean(dLat),
-                           dLat_sd = sd(dLat),
-                           dLat_se = sd(dLat) / sqrt(NROW(dLat)),
-                           dTemp_mean = mean(dTemp),
-                           dTemp_sd = sd(dTemp),
-                           dTemp_se = sd(dTemp) / sqrt(NROW(dTemp))),
-                         by = .(limit, guild, class)], 
-             aes(x = class, y = dLat_mean, col = guild)) +
-  geom_point(position = position_dodge(width = 0.3)) +
-  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                    ymax = dLat_mean + dLat_se),
-                width = 0.2, position = position_dodge(width = 0.3)) +
-  scale_color_manual(values = guild_cols) + 
-  geom_text(aes(label = paste("N =", N)),
-            size = 4, 
-            hjust = 1.3,
-            col = "black") +
-  geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(limit ~ .) +
-  labs(y = "") +
-  guides(colour = "none") +
-  theme_bw() 
-
-# Combine the two plots using cowplot
-p3 <- plot_grid(p1, p2,
-                labels = "e",
-                ncol = 2,
-                align = "h",
-                axis = "lr",
-                rel_widths = c(2, 1))
-
-# Add to plotlist
-region_plots[["TAS"]] <- p3
-
-plot_grid(
-  plot_grid(NULL, region_plots$WA, region_plots$SA, ncol = 1),
-  plot_grid(region_plots$`NA`, NULL, aus_map, ncol = 1, rel_heights = c(1, 0, 2)),
-  plot_grid(NULL, region_plots$SE, region_plots$TAS, ncol = 1),
-  ncol = 3
-)
-
 ```
+
 
 ##### Temperature time series for anomalous sites
 ```{r}
@@ -1589,7 +1115,7 @@ anom_sites_plot <-
   geom_line() + 
   geom_vline(aes(xintercept = year_i), lty = "dashed") +
   geom_vline(aes(xintercept = year_f), lty = "dashed") +
-  facet_wrap(vars(location)) +
+  facet_wrap(vars(location), ncol = 1, nrow = 2) +
   labs(y = "Average temperature (°C)", x = "") +
   theme_bw() +
   theme(panel.grid = element_blank()) +
@@ -1601,6 +1127,98 @@ ggsave(plot = anom_sites_plot,
        dpi = 300)
 ```
 
+##### Plots for validating metric
+```{r}
+# Show limits obtained through different methods
+
+# Chlorurus sordidus
+dt <- rls[taxon == "Chlorurus sordidus" & period == "t2" & side != "west"]
+dt <- dt[, ':=' (latupper = quantile(latitude, 0.05),
+                 latlower = quantile(latitude, 0.95))]
+
+dt$upper_mean <- dt[order(-latitude)][, .SD[1:10]][, .(upper_mean = mean(latitude))]$upper_mean
+dt$lower_mean <- dt[order(latitude)][, .SD[1:10]][, .(lower_mean = mean(latitude))]$lower_mean
+
+ggplot(dt,
+       aes(x = latitude, y = total)) +
+  geom_point() +
+  geom_vline(data = dt[, .(lat = unique(lat)), by = .(limit)], aes(xintercept = lat), col = "blue", lty = "dashed") +
+  geom_vline(data = dt[, .(latupper = unique(latupper))], aes(xintercept = latupper), col = "darkgreen", lty = "dashed") +
+  geom_vline(data = dt[, .(latlower = unique(latlower))], aes(xintercept = latlower), col = "darkgreen", lty = "dashed") +
+  geom_vline(data = dt[, .(upper_mean = unique(upper_mean))], aes(xintercept = upper_mean), col = "red", lty = "dashed") +
+  geom_vline(data = dt[, .(lower_mean = unique(lower_mean))], aes(xintercept = lower_mean), col = "red", lty = "dashed") +
+  coord_flip() +
+  labs(subtitle = dt$taxon) +
+  theme_bw()
+
+# Cheilodactylus fuscus or Pictilabrus laticlavius
+dt <- rls[taxon == "Cheilodactylus fuscus" & period == "t2" & side != "west"]
+dt <- dt[, ':=' (latupper = quantile(latitude, 0.05),
+                 latlower = quantile(latitude, 0.95))]
+
+dt$upper_mean <- dt[order(-latitude)][, .SD[1:10]][, .(upper_mean = mean(latitude))]$upper_mean
+dt$lower_mean <- dt[order(latitude)][, .SD[1:10]][, .(lower_mean = mean(latitude))]$lower_mean
+
+ggplot(dt,
+       aes(x = latitude, y = total)) +
+  geom_point() +
+  geom_vline(data = dt[, .(lat = unique(lat)), by = .(limit)], aes(xintercept = lat), col = "blue", lty = "dashed") +
+  geom_vline(data = dt[, .(latupper = unique(latupper))], aes(xintercept = latupper), col = "darkgreen", lty = "dashed") +
+  geom_vline(data = dt[, .(latlower = unique(latlower))], aes(xintercept = latlower), col = "darkgreen", lty = "dashed") +
+  geom_vline(data = dt[, .(upper_mean = unique(upper_mean))], aes(xintercept = upper_mean), col = "red", lty = "dashed") +
+  geom_vline(data = dt[, .(lower_mean = unique(lower_mean))], aes(xintercept = lower_mean), col = "red", lty = "dashed") +
+  coord_flip() +
+  labs(subtitle = dt$taxon) +
+  theme_bw()
+
+# Centrostephanus rodgersii
+dt <- rls[taxon == "Centrostephanus rodgersii" & period == "t2" & side != "west"]
+dt <- dt[, ':=' (latupper = quantile(latitude, 0.05),
+                 latlower = quantile(latitude, 0.95))]
+
+dt$upper_mean <- dt[order(-latitude)][, .SD[1:10]][, .(upper_mean = mean(latitude))]$upper_mean
+dt$lower_mean <- dt[order(latitude)][, .SD[1:10]][, .(lower_mean = mean(latitude))]$lower_mean
+
+ggplot(dt,
+       aes(x = latitude, y = total)) +
+  geom_point() +
+  geom_vline(data = dt[, .(lat = unique(lat)), by = .(limit)], aes(xintercept = lat), col = "blue", lty = "dashed") +
+  geom_vline(data = dt[, .(latupper = unique(latupper))], aes(xintercept = latupper), col = "darkgreen", lty = "dashed") +
+  geom_vline(data = dt[, .(latlower = unique(latlower))], aes(xintercept = latlower), col = "darkgreen", lty = "dashed") +
+  geom_vline(data = dt[, .(upper_mean = unique(upper_mean))], aes(xintercept = upper_mean), col = "red", lty = "dashed") +
+  geom_vline(data = dt[, .(lower_mean = unique(lower_mean))], aes(xintercept = lower_mean), col = "red", lty = "dashed") +
+  coord_flip() +
+  labs(subtitle = dt$taxon) +
+  theme_bw()
+
+# Cephaloscyllium laticeps
+dt <- rls[taxon == "Cephaloscyllium laticeps" & period == "t2" & side != "west"]
+dt <- dt[, ':=' (latupper = quantile(latitude, 0.05),
+                 latlower = quantile(latitude, 0.95))]
+
+dt$upper_mean <- dt[order(-latitude)][, .SD[1:10]][, .(upper_mean = mean(latitude))]$upper_mean
+dt$lower_mean <- dt[order(latitude)][, .SD[1:10]][, .(lower_mean = mean(latitude))]$lower_mean
+
+ggplot(dt,
+       aes(x = latitude, y = total)) +
+    geom_point() +
+    geom_vline(data = dt[, .(lat = unique(lat)), by = .(limit)], aes(xintercept = lat), col = "blue", lty = "dashed") +
+    geom_vline(data = dt[, .(latupper = unique(latupper))], aes(xintercept = latupper), col = "darkgreen", lty = "dashed") +
+    geom_vline(data = dt[, .(latlower = unique(latlower))], aes(xintercept = latlower), col = "darkgreen", lty = "dashed") +
+    geom_vline(data = dt[, .(upper_mean = unique(upper_mean))], aes(xintercept = upper_mean), col = "red", lty = "dashed") +
+    geom_vline(data = dt[, .(lower_mean = unique(lower_mean))], aes(xintercept = lower_mean), col = "red", lty = "dashed") +
+    coord_flip() +
+    labs(subtitle = dt$taxon) +
+    theme_bw()
+
+
+
+```
+
+
+
+
+#### Additional Plots, not used in publication
 
 ##### TAS invert plot
 ```{r}
