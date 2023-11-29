@@ -604,7 +604,7 @@ rls_summary <- rls_summary[, ':=' (guild = factor(guild, levels = c("tropical", 
                                    habitat = factor(ifelse(habitat == "Coral", "coral",
                                                            ifelse(habitat == "Sand", "sand", habitat)), levels = c("coral", "rock", "sand", "water column")),
                                    region = factor(region, levels = c("N", "SW", "S", "SE", "TAS")),
-                                   limit = factor(limit, levels = c("northern", "southern")))]
+                                   limit = factor(ifelse(limit == "northern", "warm", "cool"), levels = c("warm", "cool")))]
 ```
 
 ##### Introductory figure
@@ -720,6 +720,51 @@ aus_map <- ggplot() +
   theme(legend.position = "bottom", 
         legend.direction = "horizontal")
 
+
+
+####---- Interannual SST variation in regions
+
+site_sst_yearly <- fread("../Raw Data/site_sst_yearly.csv") #nrows = 12,570
+
+# Add coordinates
+site_sst_yearly <- site_sst_yearly[rls[, .(latitude = unique(latitude), longitude = unique(longitude)), by = .(site_code)], on = .(site_code), nomatch = NULL]
+
+# Add regions
+site_sst_yearly <- site_sst_yearly[, region:= ifelse(latitude > -20.5 & longitude < 147, "N",
+                                             ifelse(latitude < -20.5 & longitude < 117, "SW",
+                                                    ifelse(latitude %between% c(-40, -30) & longitude %between% c(120, 147), "S",
+                                                           ifelse(latitude %between% c(-40, -25) & longitude > 147, "SE", 
+                                                                  ifelse(latitude > -25 & longitude > 147, "N", "TAS")))))]
+
+# Calculate average temperature at each region
+site_sst_yearly <- site_sst_yearly[, regional_mean:= mean(mean_sst), by = .(region, year)]
+
+# Show average temperature as a fractional change of the starting temperature
+site_sst_yearly <- site_sst_yearly[site_sst_yearly[year == 2008, .(sst_y0 = unique(regional_mean)), by = .(region)], on = .(region)]
+site_sst_yearly$regional_mean <- site_sst_yearly$regional_mean / site_sst_yearly$sst_y0
+
+# Regional plots
+
+site_sst_plots <- list()
+for(i in site_sst_yearly[, unique(region)]){
+  
+  # Subset data
+  data_p1 <- site_sst_yearly[region == i]
+  
+  ## Create plot
+  p1 <- ggplot(data_p1, aes(x = year, y = regional_mean)) + 
+    geom_line(col = "red") +
+    geom_vline(xintercept = ifelse(i == "N", 2016, ifelse(i == "SW", 2011, 2008)), 
+               lty = "dashed", alpha = ifelse(i %in% c("N", "SW"), 1, 0)) +
+    labs(y = "Mean SST (fold)", x = "") +
+    scale_y_continuous(n.breaks = 3, labels = function(x) sprintf("%.2f", x)) +
+    theme_bw() +
+    theme(panel.grid = element_blank()) +
+    guides(col = "none")
+  
+  # Add to list of region plots
+  site_sst_plots[[i]] <- p1 
+}
 
 
 ####---- Histograms
@@ -892,20 +937,35 @@ intro_plot <-
 intro_plot2 <-
   plot_grid(
     # Left hand side
-    plot_grid(region_plots$N, 
-            region_plots$SW,
-            ncol = 1, nrow = 2),
+    plot_grid(plot_grid(region_plots$N,
+                        site_sst_plots$N,
+                        ncol = 1, nrow = 2,
+                        rel_heights = c(1, 0.3)),
+              plot_grid(region_plots$SW,
+                        site_sst_plots$SW,
+                        ncol = 1, nrow = 2,
+                        rel_heights = c(1, 0.3)),
+              ncol = 1, nrow = 2),
     # Middle
     plot_grid(aus_map, 
-              plot_grid(NULL, region_plots$TAS, NULL,
+              plot_grid(NULL, plot_grid(region_plots$TAS,
+                                        site_sst_plots$TAS,
+                                        ncol = 1, nrow = 2,
+                                        rel_heights = c(1, 0.5)), NULL,
                         nrow = 1, ncol = 3,
                         rel_widths = c(0.5, 1, 0.5)),
               nrow = 2, ncol = 1,
-              rel_heights = c(1, 0.4)),
+              rel_heights = c(1, 0.5)),
     # Right hand side
-    plot_grid(region_plots$S, 
-            region_plots$SE,
-            ncol = 1, nrow = 2),
+    plot_grid(plot_grid(region_plots$S,
+                        site_sst_plots$S,
+                        ncol = 1, nrow = 2,
+                        rel_heights = c(1, 0.3)),
+              plot_grid(region_plots$SE,
+                        site_sst_plots$SE,
+                        ncol = 1, nrow = 2,
+                        rel_heights = c(1, 0.3)),
+              ncol = 1, nrow = 2),
     nrow = 1, ncol = 3,
     rel_widths = c(0.5, 1, 0.5),
     plot_bg = "white"
@@ -921,10 +981,9 @@ intro_plot <-
   plot_layout(nrow = 2)
             
 
-ggsave(plot = intro_plot2, 
-       paste0(dir, "/figures/intro_plot.png"), device = "png", 
-       width = 180,  units = "mm", 
-       dpi = 300)
+ggsave(plot = intro_plot2,
+       filename = paste0(dir, "/figures/intro_plot.png"),
+       width = 180, height = 220, units = "mm", dpi = 300)
 ```
 
 ##### Summary Plots
@@ -967,24 +1026,8 @@ rls_means_plot_wt <- ggplot(rls_means_wt,
   guides(colour = "none")
 
 # Regression
-rls_summary_regression <- ggplot(rls_summary, aes(x = dSST, y = dLat, col = guild)) +
-  geom_point(col = "grey", alpha = 0.5) +
-  geom_smooth(method = "glm") +
-  geom_hline(yintercept = 0, lty = "dashed") +
-  facet_grid(limit ~ guild, scales = 'free') +
-  labs(x = "Changes in sea-surface temperature (°C)", y = "Changes in latitudinal limits (° latitude)", subtitle = "c") +
-  geom_text(data = rls_summary[limit == "northern" & guild == "tropical"],
-            aes(x = -2.7, y = -7, label = "p < 0.05"),
-            hjust = 0, vjust = -1, color = "black") +
-  geom_text(data = rls_summary[limit == "southern" & guild == "tropical"],
-            aes(x = -2.7, y = -15, label = "p = 0.05"),
-            hjust = 0, vjust = -1, color = "black") +
-  theme_bw() +
-  theme(strip.text.x = element_blank(),
-        panel.grid = element_blank()) +
-  guides(colour = "none")
 
-limits <- c("northern", "southern")
+limits <- c("warm", "cool")
 
 reg_models <- data.table() # empty data.table
 for(j in unique(rls_summary$guild)){
@@ -1014,6 +1057,48 @@ for(j in unique(rls_summary$guild)){
 
 # Both tropical trends are significant -> evidence that northern limit is highly significant
 
+rls_summary_regression <- ggplot(rls_summary, aes(x = dSST, y = dLat, col = guild)) +
+  geom_point(col = "grey", alpha = 0.5) +
+  geom_smooth(method = "glm") +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_grid(limit ~ guild, scales = 'free') +
+  labs(x = "Changes in sea-surface temperature (°C)", y = "Changes in latitudinal limits (° latitude)", subtitle = "c") +
+  
+  # Add text for p-values
+  geom_text(data = rls_summary[limit == "warm" & guild == "tropical"],
+            aes(x = -2.7, y = -6, label = "p < 0.05"),
+            hjust = 0, vjust = -1, color = "black") +
+  geom_text(data = rls_summary[limit == "cool" & guild == "tropical"],
+            aes(x = -2.7, y = -13, label = "p = 0.05"),
+            hjust = 0, vjust = -1, color = "black") +
+  geom_text(data = rls_summary[limit == "warm" & guild == "temperate"],
+            aes(x = -2.7, y = -6, label = "p = 0.17"),
+            hjust = 0, vjust = -1, color = "black") +
+  geom_text(data = rls_summary[limit == "cool" & guild == "temperate"],
+            aes(x = -2.7, y = -13, label = "p = 0.69"),
+            hjust = 0, vjust = -1, color = "black") +
+  
+  # Add text for slope values
+  geom_text(data = rls_summary[limit == "warm" & guild == "tropical"],
+            aes(x = -2.7, y = -9, label = "slope = -0.70"),
+            hjust = 0, vjust = -1, color = "black") +
+  geom_text(data = rls_summary[limit == "cool" & guild == "tropical"],
+            aes(x = -2.7, y = -18, label = "slope = -0.20"),
+            hjust = 0, vjust = -1, color = "black") +
+  geom_text(data = rls_summary[limit == "warm" & guild == "temperate"],
+            aes(x = -2.7, y = -9, label = "slope = -0.14"),
+            hjust = 0, vjust = -1, color = "black") +
+  geom_text(data = rls_summary[limit == "cool" & guild == "temperate"],
+            aes(x = -2.7, y = -18, label = "slope = -0.03"),
+            hjust = 0, vjust = -1, color = "black") +
+  
+  theme_bw() +
+  theme(strip.text.x = element_blank(),
+        panel.grid = element_blank()) +
+  guides(colour = "none")
+
+# Summary plot
+
 summary_plot <- 
   ggarrange(ggarrange(rls_summary_vp, rls_means_plot_wt,
                     nrow = 1),
@@ -1022,7 +1107,7 @@ summary_plot <-
 
 ggsave(plot = summary_plot, 
        paste0(dir, "/figures/summary_plot.png"), device = "png", 
-       width = 180,  units = "mm", 
+       width = 180, height = 180, units = "mm", 
        dpi = 300)
 ```
 
@@ -1056,41 +1141,43 @@ guild_cols <- c(tropical = "#F8766D",
 # Plot
 rls_means_region_plot <- 
   ggplot(rls_means_region[N > 10],
-         aes(x = region, y = dLat_mean, col = guild)) +
-  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = ifelse(rls_means_region$limit == "northern", -Inf, 0), ymax = ifelse(rls_means_region$limit == "northern", 0, Inf)), fill = "lightgrey", alpha = 0.3, col = NA) +
-  geom_point(position = position_dodge(width = 0.3)) +
-  geom_errorbar(aes(ymin = dLat_mean - dLat_se,
-                    ymax = dLat_mean + dLat_se),
-                width = 0.2, position = position_dodge(width = 0.3)) +
-  geom_hline(yintercept = 0, lty = "dashed") +
-  geom_text(aes(label = paste("N =", N)),
-            size = 4, 
-            hjust = 1.3,
-            col = "black") +
-  geom_text(label = ifelse(rls_means_region$Signif == TRUE, "*", ""), 
-            col = "black",
-            size = 5, 
-            hjust = 0.9, vjust = -1.2) +
-  geom_text(aes(x = "TAS", y = 1),
-            label = ifelse(rls_means_region$limit == "northern", "extending", "contracting"), 
-            col = "black",
-            size = 5) +
-  geom_text(aes(x = "TAS", y = -1),
-            label = ifelse(rls_means_region$limit == "northern", "contracting", "extending"), 
-            col = "black",
-            size = 5) +
-  facet_grid(limit ~.) +
-  labs(y = "Mean changes in latitudinal limits (° latitude)") +
-  ylim(c(-1.2, 1.6)) +
-  scale_color_manual(values = guild_cols) +
-  theme_bw() +
-  theme(axis.title.x = element_blank(),
-        panel.grid = element_blank()) +
-  guides(colour = "none")
+       aes(x = region, y = dLat_mean, col = guild)) +
+    geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = ifelse(rls_means_region$limit == "warm", -Inf, 0), ymax = ifelse(rls_means_region$limit == "warm", 0, Inf)), fill = "lightgrey", alpha = 0.3, col = NA) +
+    geom_point(position = position_dodge(width = 0.3)) +
+    geom_errorbar(aes(ymin = dLat_mean - dLat_se,
+                      ymax = dLat_mean + dLat_se),
+                  width = 0.2, position = position_dodge(width = 0.3)) +
+    geom_hline(yintercept = 0, lty = "dashed") +
+    geom_text(aes(label = paste("N =", N)),
+              size = 4, 
+              hjust = 1.3,
+              col = "black") +
+    geom_text(label = ifelse(rls_means_region$Signif == TRUE, "*", ""), 
+              col = "black",
+              size = 5, 
+              hjust = 0.9, vjust = -1.2) +
+    geom_text(aes(x = "TAS", y = 1),
+              label = ifelse(rls_means_region$limit == "warm", "extending", "contracting"), 
+              col = "black",
+              size = 5) +
+    geom_text(aes(x = "TAS", y = -1),
+              label = ifelse(rls_means_region$limit == "warm", "contracting", "extending"), 
+              col = "black",
+              size = 5) +
+    facet_grid(limit ~.) +
+    labs(y = "Mean changes in latitudinal limits (° latitude)") +
+    ylim(c(-1.2, 1.6)) +
+    scale_color_manual(values = guild_cols) +
+    scale_y_continuous(breaks = seq(-1, 1, by = 0.5)) +  # Add 0.5 interval marks on the y-axis
+    theme_bw() +
+    theme(axis.title.x = element_blank(),
+          panel.grid = element_blank(),
+          panel.spacing = unit(2, "lines")) +  # Adjust the panel spacing
+    guides(colour = "none")
 
 ggsave(plot = rls_means_region_plot, 
        paste0(dir, "/figures/rls_means_region_plot.png"), device = "png", 
-       width = 180,  units = "mm", 
+       width = 180, height = 150,  units = "mm", 
        dpi = 300)
 ```
 
@@ -1130,6 +1217,27 @@ ggsave(plot = anom_sites_plot,
 ##### Plots for validating metric
 ```{r}
 # Show limits obtained through different methods
+
+# Tropical species
+dt <- rls[guild == "tropical" & period == "t2"]
+dt <- dt[, ':=' (latlower = quantile(latitude, 0.05),
+                 latupper = quantile(latitude, 0.95))]
+
+dt$upper_mean <- dt[order(-latitude)][, .SD[1:10]][, .(upper_mean = mean(latitude))]$upper_mean
+dt$lower_mean <- dt[order(latitude)][, .SD[1:10]][, .(lower_mean = mean(latitude))]$lower_mean
+
+ggplot(dt,
+       aes(x = latitude, y = total)) +
+  geom_point() +
+  geom_vline(data = dt[, .(lat = unique(lat)), by = .(limit)], aes(xintercept = lat), col = "blue", lty = "dashed") +
+  geom_vline(data = dt[, .(latupper = unique(latupper))], aes(xintercept = latupper), col = "darkgreen", lty = "dashed") +
+  geom_vline(data = dt[, .(latlower = unique(latlower))], aes(xintercept = latlower), col = "darkgreen", lty = "dashed") +
+  geom_vline(data = dt[, .(upper_mean = unique(upper_mean))], aes(xintercept = upper_mean), col = "red", lty = "dashed") +
+  geom_vline(data = dt[, .(lower_mean = unique(lower_mean))], aes(xintercept = lower_mean), col = "red", lty = "dashed") +
+  coord_flip() +
+  labs(subtitle = dt$taxon) +
+  theme_bw()
+
 
 # Chlorurus sordidus
 dt <- rls[taxon == "Chlorurus sordidus" & period == "t2" & side != "west"]
