@@ -754,8 +754,8 @@ for(i in site_sst_yearly[, unique(region)]){
   ## Create plot
   p1 <- ggplot(data_p1, aes(x = year, y = regional_mean)) + 
     geom_line(col = "red") +
-    geom_vline(xintercept = ifelse(i == "N", 2016, ifelse(i == "SW", 2011, 2008)), 
-               lty = "dashed", alpha = ifelse(i %in% c("N", "SW"), 1, 0)) +
+    geom_vline(xintercept = ifelse(i %in% c("N", "TAS"), 2016, ifelse(i == "SW", 2011, 2008)), 
+               lty = "dashed", alpha = ifelse(i %in% c("N", "SW", "TAS"), 1, 0)) +
     labs(y = "Mean SST (fold)", x = "") +
     scale_y_continuous(n.breaks = 3, labels = function(x) sprintf("%.2f", x)) +
     theme_bw() +
@@ -1216,6 +1216,56 @@ ggsave(plot = anom_sites_plot,
 
 ##### Plots for validating metric
 ```{r}
+# Simulate data
+simulated_data <- data.table(
+  latitude = seq(-10, -45, length.out = 100),
+  abundance = dnorm(seq(10, 50, length.out = 100), mean = 30, sd = 20) * 1000
+)
+
+cumulative_abundance_data <- data.table(
+  latitude = seq(-10, -45, length.out = 100),
+  cum_abund = cumsum(simulated_data$abundance)
+)
+
+percentiles <- quantile(cumulative_abundance_data$cum_abund, c(0.05, 0.95))
+
+latitude_5th <- cumulative_abundance_data$latitude[which.min(abs(cumulative_abundance_data$cum_abund - percentiles[1]))]
+latitude_95th <- cumulative_abundance_data$latitude[which.min(abs(cumulative_abundance_data$cum_abund - percentiles[2]))]
+
+
+# Create the first plot (bell-shaped curve)
+plot1 <- ggplot(simulated_data, aes(x = latitude, y = abundance)) +
+  geom_smooth(method = "loess", col = "black") +
+  labs(subtitle = "a",
+       x = "latitude",
+       y = "abundance") +
+  geom_vline(xintercept = latitude_5th, lty = "dashed", col = "red") +
+  geom_vline(xintercept = latitude_95th, lty = "dashed", col = "blue") +
+  coord_flip() +
+  theme_bw()
+
+# Create the second plot (cumulative asymptotic curve)
+plot2 <- ggplot(cumulative_abundance_data, aes(x = cum_abund, y = latitude)) +
+  geom_smooth(method = "loess", col = "black") +
+  geom_vline(xintercept = percentiles, lty = "dashed") +
+  geom_hline(yintercept = latitude_5th, lty = "dashed", col = "red") +
+  geom_hline(yintercept = latitude_95th, lty = "dashed", col = "blue") + 
+  labs(subtitle = "b",
+       x = "cumulative abundance",
+       y = "latitude") +
+  theme_bw()
+
+# Combine plots side by side
+conceptual_plot<- plot_grid(plot1, plot2, ncol = 2)
+
+ggsave(plot = conceptual_plot,
+       filename = paste0(dir, "/figures/conceptual_plot.png"),
+       width = 180, height = 90, units = "mm", dpi = 300)
+
+
+
+
+
 # Show limits obtained through different methods
 
 # Tropical species
