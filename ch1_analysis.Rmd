@@ -977,6 +977,12 @@ rls_ttest$p.value.bh.adjust <- p.adjust(rls_ttest$p.val, method = 'BH')
 # Mark significant means on dataset
 rls_means_region <- rls_means_region[rls_ttest[, .(Signif), by = .(limit, guild, region)], on = .(limit, guild, region)]
 
+# Add restraints cateogry to subset
+rls_means_region$restriction <- ifelse(rls_means_region$region == "S" | rls_means_region$region == "TAS", "biogeographical restriction",
+                                       ifelse(rls_means_region$region == "N" & rls_means_region$limit == "warm edge", "sampling restriction", "no restriction")) 
+rls_means_region$restriction <- factor(rls_means_region$restriction, levels = c("no restriction", "sampling restriction", "biogeographical restriction"))
+
+
 # Set guild color scheme
 guild_cols <- c(tropical = "#F8766D",
                 temperate = "#00BFC4")
@@ -984,9 +990,9 @@ guild_cols <- c(tropical = "#F8766D",
 # Plot
 rls_means_region_plot <- 
   ggplot(rls_means_region[N > 10],
-       aes(x = region, y = dLat_mean, col = guild)) +
+       aes(x = region, y = dLat_mean, col = guild, shape = restriction)) +
     geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = ifelse(rls_means_region$limit == "warm edge", -Inf, 0), ymax = ifelse(rls_means_region$limit == "warm edge", 0, Inf)), fill = "lightgrey", alpha = 0.3, col = NA) +
-    geom_point(position = position_dodge(width = 0.3)) +
+    geom_point(position = position_dodge(width = 0.3), size = 3) +
     geom_errorbar(aes(ymin = dLat_mean - dLat_se,
                       ymax = dLat_mean + dLat_se),
                   width = 0.2, position = position_dodge(width = 0.3)) +
@@ -1016,7 +1022,12 @@ rls_means_region_plot <-
     theme(axis.title.x = element_blank(),
           panel.grid = element_blank(),
           strip.text = element_text(size = 12),
-          panel.spacing = unit(2, "lines")) +  # Adjust the panel spacing
+          panel.spacing = unit(2, "lines"), # Adjust the panel
+          legend.position = c(.02, .97),
+          legend.justification = c("left", "top"),
+          legend.box.just = "left",
+          legend.margin = margin(1, 1, 1, 1), 
+          legend.title = element_blank()) + 
     guides(colour = "none")
 
 ggsave(plot = rls_means_region_plot, 
