@@ -764,10 +764,10 @@ for(i in site_sst_yearly[, unique(region)]){
     geom_line(col = "red") +
     geom_vline(xintercept = ifelse(i %in% c("N", "TAS"), 2016, ifelse(i == "SW", 2011, 2008)), 
                lty = "dashed", alpha = ifelse(i %in% c("N", "SW", "TAS"), 1, 0)) +
-    labs(y = "Temp anomaly (°C)", x = "", subtitle = ifelse(i == "N", "a",
-                                                            ifelse(i == "SW", "b",
-                                                                   ifelse(i == "S", "c", 
-                                                                          ifelse(i == "SE", "d", "e"))))) +
+    labs(y = "Temp anomaly (°C)", x = "", subtitle = ifelse(i == "N", "a) North",
+                                                            ifelse(i == "SW", "b) Southwest",
+                                                                   ifelse(i == "S", "c) South", 
+                                                                          ifelse(i == "SE", "d) Southeast", "e) Tasmania"))))) +
     scale_y_continuous(n.breaks = 3, labels = function(x) sprintf("%.2f", x)) +
     theme_bw() +
     theme(panel.grid = element_blank()) +
@@ -977,10 +977,10 @@ rls_ttest$p.value.bh.adjust <- p.adjust(rls_ttest$p.val, method = 'BH')
 # Mark significant means on dataset
 rls_means_region <- rls_means_region[rls_ttest[, .(Signif), by = .(limit, guild, region)], on = .(limit, guild, region)]
 
-# Add restraints cateogry to subset
-rls_means_region$restriction <- ifelse(rls_means_region$region == "S" | rls_means_region$region == "TAS", "biogeographical restriction",
-                                       ifelse(rls_means_region$region == "N" & rls_means_region$limit == "warm edge", "sampling restriction", "no restriction")) 
-rls_means_region$restriction <- factor(rls_means_region$restriction, levels = c("no restriction", "sampling restriction", "biogeographical restriction"))
+# Add barrier cateogry to subset
+rls_means_region$barrier <- ifelse(rls_means_region$region == "S" | rls_means_region$region == "TAS", "Southern Ocean habitat barrier",
+                                       ifelse(rls_means_region$region == "N" & rls_means_region$limit == "warm edge", "North coast sampling barrier", "no restriction")) 
+rls_means_region$restriction <- factor(rls_means_region$restriction, levels = c("no restriction", "North coast sampling barrier", "Southern Ocean habitat barrier"))
 
 
 # Set guild color scheme
@@ -990,7 +990,7 @@ guild_cols <- c(tropical = "#F8766D",
 # Plot
 rls_means_region_plot <- 
   ggplot(rls_means_region[N > 10],
-       aes(x = region, y = dLat_mean, col = guild, shape = restriction)) +
+       aes(x = region, y = dLat_mean, col = guild, shape = barrier)) +
     geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = ifelse(rls_means_region$limit == "warm edge", -Inf, 0), ymax = ifelse(rls_means_region$limit == "warm edge", 0, Inf)), fill = "lightgrey", alpha = 0.3, col = NA) +
     geom_point(position = position_dodge(width = 0.3), size = 3) +
     geom_errorbar(aes(ymin = dLat_mean - dLat_se,
