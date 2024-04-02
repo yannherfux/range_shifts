@@ -160,7 +160,7 @@ rls <- rls[, ':=' (year_i = min(year(survey_date)),
                    dt = max(year(survey_date)) - min(year(survey_date))),
            by = .(site_code)]
 
-rls[, mean(dt)] # average time period: 6.77 years
+rls[, mean(dt)] # average time period: 7.1 years
 
 # Remove data in between those time periods and those sites that were only surveyed once. Also removed sites that were not found in both periods
 rls <- rls[year(survey_date) == year_i | year(survey_date) == year_f] #nrow = 273,508
