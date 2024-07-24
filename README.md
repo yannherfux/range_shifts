@@ -1,4 +1,5 @@
-# chapter1
-Distinguishing latitudinal changes in the distribution limits of Australian marine species over a decade of environmental change
+# Range Shifts
+This repository pertains to the first chapter of my PhD which looks at the range shifts of Australian reef species over the last decade.
 
-This is the first chapter of my PhD sutdying the effects of temperature on marine biodiversity
+Survey data was downloaded through the Reef Life Survey portal: https://reeflifesurvey.com/survey-data/
+Temperature data was downloaded through the NOAA Coral Reef Watch program: https://coralreefwatch.noaa.gov/main/
