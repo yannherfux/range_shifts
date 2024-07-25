@@ -1,0 +1,294 @@
+---
+title: "Distinguishing latitudinal changes of shallow reef species over a decade of environmental change in Australia"
+author: "Yann Herrera Fuchs"
+date: "2023-01-25"
+output: 
+  html_document:
+    theme: darkly
+    highlight: default
+    toc: true
+    toc_depth: 3
+    toc_float:
+      toc_collapse: true
+    code_folding: hide
+    fig_width: 10
+    fig_height: 7
+    fig_caption: true
+---
+
+This is the code used for analyzing the data for Chapter 1
+
+Remember to set working directory
+
+# Load initial packages and data {.tabset}
+
+*Packages used* 
+```{r Load packages, message=FALSE, warning=FALSE}
+rm(list = ls()) # clear environment memory
+
+dir <- "C:/Users/yherrera/OneDrive - University of Tasmania/Desktop/UTas/R/chapter1"
+setwd(dir)
+
+# Data wrangling
+library(tidyverse) # for manipulating data in tidy format
+library(data.table) # summarizing and subsetting more efficiently using data.table syntax
+library(DT) # for online data.table manipulation
+
+# Statistical analysis
+
+# Maps and figures
+
+```
+
+*Input data*
+```{r Reading raw data, message=FALSE}
+# RLS dataset
+rls.raw <- fread("../Raw Data/ep_m1_m2_AUS.csv") #nrows = 1,634,614
+
+# Species traits dataset (for extracting guild information)
+traits <- fread("../Raw Data/TRAITS MASTER.csv") #nrows = 5,188
+
+# RLS survey ID sea-surface temperature dataset (Conor's method)
+sst_data <- fread("../Raw Data/rls_sites_sst2.csv") #nrows = 54,973
+```
+
+***
+## Code
+### Organizing data
+
+Adjust species naming conventions
+```{r}
+rls.raw[, taxon:= ifelse(taxon == "Cenolia glebosus",
+                         "Tropiometra afra",
+                         ifelse(taxon == "Echinostrephus molaris",
+                                "Echinostrephus aciculatus",
+                                ifelse(taxon == "Fistularia pertimba", "Fistularia commersonii",
+                                       ifelse(taxon == "Holothuria nobilis",
+                                              "Holothuria whitmaei",
+                                              ifelse(taxon == "Saurida nebulosa", "Saurida gacilis",
+                                                     taxon)))))]
+```
+
+
+Add guild information from the traits matrix.
+```{r}
+# Join datasets
+rls <- rls.raw[traits[, .(taxon = `CURRENT_SPECIES_NAME`,
+                          guild = `thermal guild`)], 
+               on= "taxon", nomatch = NULL] # nrow = 1,575,443
+```
+
+Add information on SST at each survey. We are using the average of the 2-years daily SST leading to the survey date. This is to account for periods of extreme or anomalous weather events.
+```{r}
+# Get mean SST at each survey ID
+sst_data <- sst_data[, .(mean_sst = mean(mean_sst, na.rm = TRUE)), by = .(survey_id)] # nrow = 28,074
+
+# Select columns of interest from SST data
+rls <- rls[sst_data[, .(survey_id, mean_sst)], on= .(survey_id), nomatch = NULL]#nrow = 1,575,691
+
+rls <- rls[!is.na(mean_sst)] #nrow = 1,272,381
+```
+
+***
+
+### Filtering and processing the data 
+#### Removing unnecessary data
+
+Remove data that will not be used in this analysis.
+```{r Remove unnecessary data, message=FALSE, warning=FALSE}
+# Remove species with .sp and .spp (those which don't have species fully resolved)
+rls <- rls[which(grepl("sp.", as.character(rls$taxon), fixed = T) == F), ] #nrow = 1,271,259
+rls <- rls[which(grepl("spp.", as.character(rls$taxon), fixed = T) == F), ] #nrow = 1,249,991
+
+# Remove NAs in taxon data
+rls <- rls[which(is.na(rls$taxon) == F), ] #nrow = 1,249,991
+
+# Select vertebrate and invertebrate classes to include in analysis
+rls <- rls[class %in% c("Asteroidea", "Cephalopoda", "Crinoidea", "Echinoidea", "Gastropoda", "Holothuroidea", "Malacostraca", "Actinopterygii", "Elasmobranchii"), ] #nrow = 1,243,199 
+#NOTE: changed Chondrichtyes to Elasmobranchii, Crinoidea and Holothuroidea not found in raw dataset
+
+# Subset to data from 2010 onwards
+rls <- rls[year(survey_date) >= "2010"] #nrow = 1,105,661
+```
+
+#### Data adjustments
+Make sure that there is a unique latitude and longitude value for each site_code.
+
+```{r}
+# Calculate mean latitude and longitude values to obtain unique coordinates
+rls_sites <- rls[, lapply(.SD, mean), 
+                 by = .(site_code),
+                 .SDcols = c("latitude", "longitude")]
+
+
+rls <- rls[, c(1:8, 11:34)][rls_sites, on= .(site_code)] 
+```
+
+Adjust method and block data. There should only be two blocks in each transect, and cryptic fish and invertebrates are only found in method 2.
+```{r Adjust method and block, message=FALSE, warning=FALSE}
+# Remove block 0
+rls <- rls[block != 0] #nrow = 1,105,659
+
+# Remove fish species in M2 from M1 (cryptic fish)
+rls[method == 1 & taxon %in% rls[method == 2 & class == "Actinopterygii"]$taxon]$method <- 2
+    
+# Change method 1 inverts to method 2
+rls[class != "Actinopterygii" & class != "Elasmobranchii"]$method <- 2
+```
+
+The raw data is already tallied by block, so we need to sum abundance data for each species by survey ID to get N per 500m^2^ for M1, and per 100m^2^ for M2 (the total of each unique species on each survey).
+```{r Summing abundance data, message=FALSE, warning=FALSE}
+rls <- rls[, .(total = sum(total)), 
+           by = .(taxon, survey_id,
+                  # add factors of interest
+                  class, guild, 
+                  site_code, latitude, longitude,
+                  survey_date, 
+                  mean_sst)] #nrow = 457,244
+```
+
+#### Site selection and time periods
+In order to avoid sampling biases, we focus on analyzing latitudinal change from the first and last years that sites were surveyed using June 2016 as a heatwave cutoff.
+
+```{r}
+rls$site_code <- factor(rls$site_code, levels = rls[, .(site_code = unique(site_code)), by = .(latitude)][order(latitude)]$site_code)
+
+ggplot(rls[, .(survey_date = unique(survey_date)), by = .(site_code, latitude)][, .N, by = .(site_code, latitude, year(survey_date))], aes(x = year, y = latitude, size = log(N))) +
+  geom_point() +
+  theme_bw()
+
+# Define period
+rls <- rls[, period:= ifelse(survey_date < "2016-06-01", # heatwave period
+                             "t1", "t2")]
+
+# Test
+rls <- rls[year(survey_date) %between% c(2010, 2015) | year(survey_date) %between% c(2016, 2021)] %>%
+  .[, period:= ifelse(year(survey_date) <= 2015, "t1", "t2")]
+
+
+# Select sites
+rls <- rls[, ':=' (year_i = min(year(survey_date)),
+                   year_f = max(year(survey_date)),
+                   dt = max(year(survey_date)) - min(year(survey_date))),
+           by = .(site_code)]
+
+rls[, mean(dt)] # average time period: 7 years
+
+
+# Remove data in between those time periods and those sites that were only surveyed once. Also removed sites that were not found in both periods
+rls <- rls[year(survey_date) == year_i | year(survey_date) == year_f] #nrow = 273,508
+rls <- rls[dt > 0] #nrow = 205,153
+rls <- rls[site_code %in% rls[period == "t1"]$site_code & site_code %in% rls[period == "t2"]$site_code] #nrow = 178,124
+
+
+
+
+
+
+barplot <-
+  rls %>% 
+  .[, region:= ifelse(latitude > -20.5 & longitude < 147, "N",
+                                             ifelse(latitude < -20.5 & longitude < 117, "SW",
+                                                    ifelse(latitude %between% c(-40, -30) & longitude %between% c(120, 147), "S",
+                                                           ifelse(latitude %between% c(-40, -25) & longitude > 147, "SE", 
+                                                                  ifelse(latitude > -25 & longitude > 147, "N", "TAS")))))] %>%
+  .[, .(site_code = unique(site_code)), by = .(year(survey_date), region, period)] %>%
+  
+  ggplot(aes(x = year, fill = region)) +
+  geom_bar() +
+  labs(y = "Number of sites") +
+  facet_wrap(vars(period), scales = "free_x") +
+  theme_bw()
+```
+
+#### Further filtering
+
+To reduce noise we set taxon-level filters.
+
+```{r}
+# Discard species occurring in less than 30 sites.
+species_list <- rls[, .(site_code = unique(site_code)), by = .(taxon)][, .(N_site = .N), by = .(taxon)]
+rls <- rls[species_list, on= .(taxon)][N_site >= 30] # nrow = 164,603
+
+# Categorize rare and common species based on whether they appear in less than 80 sites in the first time period
+rls <- rls[, presence:= ifelse(N_site < 80, "rare", "common"), 
+                    by = .(taxon)]
+```
+
+Sampling intensity
+```{r eval=FALSE, include=FALSE}
+# Some extra things:
+sampling_intensity <- rls[, .(survey_id = unique(survey_id)), by = .(site_code, latitude, longitude, period)][, .N, by = .(site_code, latitude, longitude, period)]
+
+summary(sampling_intensity[period == "t1"])
+summary(sampling_intensity[period == "t2"])
+
+sampling_intensity <- sampling_intensity[, .(N = mean(N)), by = .(latitude = round(latitude), longitude = round(longitude), period)]
+
+ggplot(sampling_intensity,
+       aes(x = latitude, y = N)) +
+  geom_point() +
+  geom_smooth(method = "loess") +
+  facet_wrap(vars(period)) +
+  coord_flip()
+
+library(sf) # processing spatial vector data
+library(raster) # manipulating rasters
+library(terra) # spatial data analysis
+library(gstat) # producing inverse distance weighted means
+
+# Create simple features objects and a spatial grid for interpolation
+aus_pols <- raster::getData("GADM", country = "Australia", level = 1)
+crs(aus_pols) <- "EPSG:4979" # have to specify CRS with WKT comment now
+aus_sf <- st_transform(st_as_sf(aus_pols), crs = crs(aus_pols))
+
+# Plot
+sampling_intensity_map <- 
+  ggplot() +
+  
+  # Rasters
+  geom_sf(data = st_union(aus_sf)) + # Continent polygon
+  
+  # sites included in analysis
+  geom_point(data = sampling_intensity, 
+             aes(x = longitude, y = latitude, size = N),
+             shape = 1, col = "black") +
+  
+  # Facet by period
+  facet_wrap(vars(period)) +
+  
+  # adjust axes labels
+  scale_x_continuous(breaks = seq(110, 160, by = 10), limits = c(110, 165), label = paste0(seq(110, 160, by = 10), "°E")) +
+  scale_y_continuous(breaks = seq(-40, -10, by = 5), limits = c(-44, -7), label = paste0(seq(-40, -10, by = 5), "°S")) +
+  labs(size = "Av. number of surveys") +
+  theme_bw() +
+  theme(legend.position = c(0.99, 0.99), 
+        legend.justification = c("right", "top"),
+        legend.direction = "horizontal",
+        legend.box.just = "right",
+        legend.margin = margin(1, 1, 1, 1),
+        legend.key.size = unit(0.3, "cm"),
+        legend.text = element_text(size = 5),
+        legend.title = element_text(size = 5),
+        panel.grid.major = element_blank())
+
+ggsave(plot = sampling_intensity_map,
+       filename = paste0(dir, "/figures/sample_effort.png"),
+       width = 180, height = 100, units = "mm", dpi = 300)
+```
+
+
+We also have to calculate the average abundance of species per site per period, and average temperature data the same way.
+```{r, message=TRUE, warning=FALSE}
+# Density (abundance per site), temperature and site calculations by year
+rls <- rls[, lapply(.SD, mean), # calculate means for the specified data cols
+           by = .(taxon, site_code, period,
+                  # include factors of interest
+                  class, 
+                  guild, presence, 
+                  latitude, longitude,
+                  year_i, year_f, dt,
+                  N_site), # subsets
+           .SDcols = c("total", "mean_sst")] # data cols to average
+# nrow = 101,044
+```
